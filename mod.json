@@ -10,8 +10,5 @@
 	"name": "AutoBot",
 	"version": "v1.0.0",
 	"developer": "WSilentGamesW",
-	"description": "",
-	"dependencies": {
-		"geode.node-ids": ">=v1.23.3"
-	}
+	"description": ""
 }
