@@ -25,7 +25,7 @@ namespace AutoBot {
     // Функция сохранения макроса в файл для шоукейса
     void saveMacro(const std::string& levelName) {
         auto path = Mod::get()->getSaveDir() / (levelName + ".txt");
-        std::ofstream file(path);
+        std::ofstream file(path.native());
         for (const auto& act : actions) {
             file << act.frame << " " << act.hold << "\n";
         }
@@ -86,8 +86,8 @@ class $modify(MyPauseLayer, PauseLayer) {
 
 // 2. Перехватываем игровой процесс для расчёта путей и нажатий
 class $modify(MyPlayLayer, PlayLayer) {
-    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+    bool init(GJGameLevel* level, bool dontCreateObjects) {
+        if (!PlayLayer::init(level, dontCreateObjects)) return false;
 
         // Создаём холст для рисования линий поверх уровня
         AutoBot::trajectoryNode = CCDrawNode::create();
