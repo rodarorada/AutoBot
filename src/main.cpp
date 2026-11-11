@@ -1,100 +1,160 @@
-/**
- * Include the Geode headers.
- */
 #include <Geode/Geode.hpp>
+#include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
+#include <vector>
+#include <fstream>
 
-/**
- * Brings cocos2d and all Geode namespaces to the current scope.
- */
 using namespace geode::prelude;
 
-/**
- * `$modify` lets you extend and modify GD's classes.
- * To hook a function in Geode, simply $modify the class
- * and write a new function definition with the signature of
- * the function you want to hook.
- *
- * Here we use the overloaded `$modify` macro to set our own class name,
- * so that we can use it for button callbacks.
- *
- * Notice the header being included, you *must* include the header for
- * the class you are modifying, or you will get a compile error.
- *
- * Another way you could do this is like this:
- *
- * struct MyMenuLayer : Modify<MyMenuLayer, MenuLayer> {};
- */
-#include <Geode/modify/MenuLayer.hpp>
-class $modify(MyMenuLayer, MenuLayer) {
-	/**
-	 * Typically classes in GD are initialized using the `init` function, (though not always!),
-	 * so here we use it to add our own button to the bottom menu.
-	 *
-	 * Note that for all hooks, your signature has to *match exactly*,
-	 * `void init()` would not place a hook!
-	*/
-	bool init() {
-		/**
-		 * We call the original init function so that the
-		 * original class is properly initialized.
-		 */
-		if (!MenuLayer::init()) {
-			return false;
-		}
+// Структура одного действия (кадр и нажатие)
+struct MacroAction {
+    int frame;
+    bool hold;
+};
 
-		/**
-		 * You can use methods from the `geode::log` namespace to log messages to the console,
-		 * being useful for debugging and such. See this page for more info about logging:
-		 * https://docs.geode-sdk.org/tutorials/logging
-		*/
-		log::debug("Hello from my MenuLayer::init hook! This layer has {} children.", this->getChildrenCount());
+// Глобальное состояние нашего бота
+namespace AutoBot {
+    bool isRecording = false;       // Режим записи / поиска пути
+    bool isPlaying = false;         // Режим воспроизведения (шоукейс)
+    bool showTrajectories = true;   // Отрисовка линий путей
 
-		/**
-		 * See this page for more info about buttons
-		 * https://docs.geode-sdk.org/tutorials/buttons
-		*/
-		auto myButton = CCMenuItemSpriteExtra::create(
-			CCSprite::createWithSpriteFrameName("GJ_likeBtn_001.png"),
-			this,
-			/**
-			 * Here we use the name we set earlier for our modify class.
-			*/
-			menu_selector(MyMenuLayer::onMyButton)
-		);
+    int currentFrame = 0;
+    std::vector<MacroAction> actions;
+    CCDrawNode* trajectoryNode = nullptr;
 
-		/**
-		 * Here we access the `bottom-menu` node by its ID, and add our button to it.
-		 * Node IDs are a Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/nodetree
-		*/
-		auto menu = this->getChildByID("bottom-menu");
-		menu->addChild(myButton);
+    // Функция сохранения макроса в файл для шоукейса
+    void saveMacro(const std::string& levelName) {
+        auto path = Mod::get()->getSaveDir() / (levelName + ".txt");
+        std::ofstream file(path);
+        for (const auto& act : actions) {
+            file << act.frame << " " << act.hold << "\n";
+        }
+        log::info("Макрос сохранён в: {}", path);
+    }
+}
 
-		/**
-		 * The `_spr` string literal operator just prefixes the string with
-		 * your mod id followed by a slash. This is good practice for setting your own node ids.
-		*/
-		myButton->setID("my-button"_spr);
+// 1. Добавляем кнопки управления в меню паузы
+class $modify(MyPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
 
-		/**
-		 * We update the layout of the menu to ensure that our button is properly placed.
-		 * This is yet another Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/layouts
-		*/
-		menu->updateLayout();
+        auto menu = CCMenu::create();
+        menu->setPosition({ 50.f, 160.f });
+        this->addChild(menu);
 
-		/**
-		 * We return `true` to indicate that the class was properly initialized.
-		 */
-		return true;
-	}
+        // Кнопка включения/выключения отрисовки путей
+        auto sprPaths = ButtonSprite::create("Paths", "goldFont.fnt", "GJ_button_01.png", 0.7f);
+        auto btnPaths = CCMenuItemSpriteExtra::create(
+            sprPaths, this, menu_selector(MyPauseLayer::onTogglePaths)
+        );
+        btnPaths->setPosition({ 0.f, 40.f });
+        menu->addChild(btnPaths);
 
-	/**
-	 * This is the callback function for the button we created earlier.
-	 * The signature for button callbacks must always be the same,
-	 * return type `void` and taking a `CCObject*`.
-	*/
-	void onMyButton(CCObject*) {
-		FLAlertLayer::create("Geode", "Hello from my custom mod!", "OK")->show();
-	}
+        // Кнопка переключения режима (Запись / Воспроизведение)
+        auto sprMode = ButtonSprite::create("Bot Mode", "goldFont.fnt", "GJ_button_04.png", 0.7f);
+        auto btnMode = CCMenuItemSpriteExtra::create(
+            sprMode, this, menu_selector(MyPauseLayer::onToggleMode)
+        );
+        btnMode->setPosition({ 0.f, -10.f });
+        menu->addChild(btnMode);
+    }
+
+    void onTogglePaths(CCObject*) {
+        AutoBot::showTrajectories = !AutoBot::showTrajectories;
+        FLAlertLayer::create(
+            "AutoBot",
+            AutoBot::showTrajectories ? "Отрисовка путей: ВКЛ" : "Отрисовка путей: ВЫКЛ",
+            "OK"
+        )->show();
+    }
+
+    void onToggleMode(CCObject*) {
+        if (!AutoBot::isRecording && !AutoBot::isPlaying) {
+            AutoBot::isRecording = true;
+            AutoBot::actions.clear();
+            FLAlertLayer::create("AutoBot", "Режим: ПОИСК ПУТИ / ЗАПИСЬ", "OK")->show();
+        } else if (AutoBot::isRecording) {
+            AutoBot::isRecording = false;
+            AutoBot::isPlaying = true;
+            FLAlertLayer::create("AutoBot", "Режим: ВОСПРОИЗВЕДЕНИЕ (Шоукейс)", "OK")->show();
+        } else {
+            AutoBot::isPlaying = false;
+            FLAlertLayer::create("AutoBot", "Бот ВЫКЛЮЧЕН", "OK")->show();
+        }
+    }
+};
+
+// 2. Перехватываем игровой процесс для расчёта путей и нажатий
+class $modify(MyPlayLayer, PlayLayer) {
+    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+
+        // Создаём холст для рисования линий поверх уровня
+        AutoBot::trajectoryNode = CCDrawNode::create();
+        this->m_objectLayer->addChild(AutoBot::trajectoryNode, 1000);
+        return true;
+    }
+
+    void resetLevel() {
+        PlayLayer::resetLevel();
+        AutoBot::currentFrame = 0;
+        if (AutoBot::trajectoryNode) {
+            AutoBot::trajectoryNode->clear();
+        }
+    }
+
+    void postUpdate(float dt) {
+        PlayLayer::postUpdate(dt);
+        if (!this->m_player1) return;
+
+        AutoBot::currentFrame++;
+        auto player = this->m_player1;
+        CCPoint pos = player->getPosition();
+
+        // Отрисовка двух базовых прогнозов траектории по кнопке
+        if (AutoBot::trajectoryNode) {
+            AutoBot::trajectoryNode->clear();
+            if (AutoBot::showTrajectories) {
+                // Симуляция на 30 шагов вперёд: зелёная (если не жать) и красная (если прыгнуть)
+                CCPoint simNoClick = pos;
+                CCPoint simClick = pos;
+                float velNoClick = player->m_yVelocity;
+                float velClick = 11.0f; // Базовый импульс прыжка куба
+
+                for (int i = 0; i < 30; ++i) {
+                    CCPoint prevNoClick = simNoClick;
+                    CCPoint prevClick = simClick;
+
+                    simNoClick.x += 5.2f;
+                    simNoClick.y += velNoClick * 0.4f;
+                    velNoClick -= 0.85f; // Гравитация
+
+                    simClick.x += 5.2f;
+                    simClick.y += velClick * 0.4f;
+                    velClick -= 0.85f;
+
+                    AutoBot::trajectoryNode->drawSegment(prevNoClick, simNoClick, 1.0f, { 0.f, 1.f, 0.f, 0.7f });
+                    AutoBot::trajectoryNode->drawSegment(prevClick, simClick, 1.0f, { 1.f, 0.2f, 0.2f, 0.7f });
+                }
+            }
+        }
+
+        // Воспроизведение записанного пути (для шоукейса)
+        if (AutoBot::isPlaying) {
+            for (const auto& act : AutoBot::actions) {
+                if (act.frame == AutoBot::currentFrame) {
+                    if (act.hold) player->pushButton(PlayerButton::Jump);
+                    else player->releaseButton(PlayerButton::Jump);
+                }
+            }
+        }
+    }
+
+    void levelComplete() {
+        PlayLayer::levelComplete();
+        if (AutoBot::isRecording) {
+            AutoBot::isRecording = false;
+            AutoBot::saveMacro(this->m_level->m_levelName);
+        }
+    }
 };
