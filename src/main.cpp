@@ -4,13 +4,25 @@
 #include <vector>
 #include <fstream>
 #include <algorithm>
-#include <map>
 
 using namespace geode::prelude;
 
 struct MacroAction {
     int frame;
     bool hold;
+};
+
+struct BotCheckpoint {
+    int frame;
+    CCPoint pos;
+    double yVelocity;
+    bool isUpsideDown;
+    bool isShip;
+    bool isBall;
+    bool isBird;
+    bool isDart;
+    size_t actionCount;
+    int forcedBranch; // Какую ветку пробовать после отката (-1 = авто)
 };
 
 namespace AutoBot {
@@ -21,8 +33,7 @@ namespace AutoBot {
     int currentFrame = 0;
     bool currentHold = false;
     std::vector<MacroAction> actions;
-    // Запоминаем для каждого кадра, сколько раз мы там уже умирали, чтобы менять тайминг
-    std::map<int, int> deathMemory;
+    std::vector<BotCheckpoint> checkpoints;
     CCDrawNode* trajectoryNode = nullptr;
 
     void setHold(PlayerObject* player, bool hold) {
@@ -96,7 +107,7 @@ protected:
     void onTogglePaths(CCObject* s) { AutoBot::showTrajectories = !static_cast<CCMenuItemToggler*>(s)->isToggled(); }
     void onToggleRecord(CCObject* s) {
         AutoBot::isRecording = !static_cast<CCMenuItemToggler*>(s)->isToggled();
-        if (AutoBot::isRecording) { AutoBot::isPlaying = false; AutoBot::actions.clear(); AutoBot::deathMemory.clear(); }
+        if (AutoBot::isRecording) { AutoBot::isPlaying = false; AutoBot::actions.clear(); AutoBot::checkpoints.clear(); }
     }
     void onTogglePlay(CCObject* s) {
         AutoBot::isPlaying = !static_cast<CCMenuItemToggler*>(s)->isToggled();
@@ -125,6 +136,7 @@ class $modify(MyPauseLayer, PauseLayer) {
     }
     void onOpenAutoBot(CCObject*) { AutoBotPopup::create()->show(); }
 };
+
 struct BranchResult {
     bool survived;
     int survivalSteps;
@@ -144,6 +156,7 @@ SimMode getPlayerMode(PlayerObject* p) {
 class $modify(MyPlayLayer, PlayLayer) {
     struct Fields {
         std::vector<GameObject*> nearbyObjects;
+        int rollbackCooldown = 0;
     };
 
     bool init(GJGameLevel* level, bool dontCreateObjects) {
@@ -157,7 +170,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         AutoBot::currentFrame = 0;
         AutoBot::currentHold = false;
-        if (AutoBot::isRecording) AutoBot::actions.clear();
+        if (AutoBot::isRecording) { AutoBot::actions.clear(); AutoBot::checkpoints.clear(); }
         if (AutoBot::trajectoryNode) AutoBot::trajectoryNode->clear();
     }
 
@@ -165,7 +178,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         m_fields->nearbyObjects.clear();
         if (!this->m_objects) return;
         for (auto obj : CCArrayExt<GameObject*>(this->m_objects)) {
-            if (!obj || obj->m_isDecoration) continue;
+            if (!obj) continue;
             float ox = obj->getPositionX();
             if (ox >= playerX - 30.f && ox <= playerX + 600.f) {
                 m_fields->nearbyObjects.push_back(obj);
@@ -182,31 +195,28 @@ class $modify(MyPlayLayer, PlayLayer) {
         SimMode mode = getPlayerMode(player);
 
         float halfSize = 15.0f * player->getScale();
-        float groundY = 90.0f + halfSize; // Точная высота пола в GD
+        float groundY = 90.0f + halfSize;
         float ceilingY = 390.0f - halfSize;
         float speedX = 5.18f * player->m_playerSpeed;
         bool onSurface = player->m_isOnGround;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
             CCPoint prevPos = pos;
-            bool isHolding = holdPattern[step];
-            bool prevHolding = (step > 0) ? holdPattern[step - 1] : false;
+            bool isHolding = holdPattern.at(step);
+            bool prevHolding = (step > 0) ? holdPattern.at(step - 1) : false;
             bool justClicked = isHolding && !prevHolding;
 
             if (mode == SimMode::Ship) {
-                yVel += (isHolding ? 0.52 : -0.48) * gravDir;
-                yVel = std::clamp(yVel, -8.5, 8.5);
+                yVel += (isHolding ? 0.38 : -0.34) * gravDir;
+                yVel = std::clamp(yVel, -6.4, 6.4);
             } else if (mode == SimMode::Ufo) {
-                if (justClicked) yVel = 8.1 * gravDir;
-                yVel -= 0.55 * gravDir;
+                if (justClicked) yVel = 7.8 * gravDir;
+                yVel -= 0.52 * gravDir;
             } else if (mode == SimMode::Wave) {
                 yVel = (isHolding ? 1.0 : -1.0) * speedX * 1.15f * gravDir;
             } else if (mode == SimMode::Ball) {
                 if (justClicked && onSurface) {
-                    upsideDown = !upsideDown;
-                    gravDir = upsideDown ? -1.0f : 1.0f;
-                    yVel = 3.2 * gravDir;
-                    onSurface = false;
+                    upsideDown = !upsideDown; gravDir = upsideDown ? -1.0f : 1.0f; yVel = 3.2 * gravDir; onSurface = false;
                 }
                 yVel -= 0.78 * gravDir;
             } else {
@@ -217,7 +227,6 @@ class $modify(MyPlayLayer, PlayLayer) {
                     yVel -= 0.86 * gravDir;
                 }
             }
-
             pos.x += speedX;
             pos.y += static_cast<float>(yVel) * 0.45f;
             onSurface = false;
@@ -225,32 +234,38 @@ class $modify(MyPlayLayer, PlayLayer) {
             if (gravDir > 0 && pos.y <= groundY) { pos.y = groundY; if (mode != SimMode::Wave) { yVel = 0.0; onSurface = true; } }
             if (gravDir < 0 && pos.y >= ceilingY) { pos.y = ceilingY; if (mode != SimMode::Wave) { yVel = 0.0; onSurface = true; } }
 
-            CCRect pBox = { pos.x - halfSize * 0.8f, pos.y - halfSize * 0.8f, halfSize * 1.6f, halfSize * 1.6f };
+            CCRect pBox = { pos.x - halfSize * 0.85f, pos.y - halfSize * 0.85f, halfSize * 1.7f, halfSize * 1.7f };
             for (GameObject* obj : m_fields->nearbyObjects) {
                 CCRect oBox = obj->getObjectRect();
                 if (!pBox.intersectsRect(oBox)) continue;
 
+                int id = obj->m_objectID;
                 auto type = obj->m_objectType;
-                if (type == GameObjectType::Hazard) {
+
+                if (id == 35) { yVel = 15.8 * gravDir; onSurface = false; }
+                else if (id == 140) { yVel = 11.2 * gravDir; onSurface = false; }
+                else if (id == 1332) { yVel = 19.5 * gravDir; onSurface = false; }
+                else if (id == 67) { upsideDown = !upsideDown; gravDir = upsideDown ? -1.0f : 1.0f; yVel = 4.5 * gravDir; onSurface = false; }
+                else if (justClicked && (id == 36 || id == 141 || id == 1333)) {
+                    yVel = (id == 1333 ? 15.5 : (id == 36 ? 11.2 : 8.5)) * gravDir; onSurface = false;
+                } else if (id == 10 || type == GameObjectType::NormalGravityPortal) { upsideDown = false; gravDir = 1.0f; }
+                else if (id == 11 || type == GameObjectType::InverseGravityPortal) { upsideDown = true; gravDir = -1.0f; }
+                else if (id == 12 || type == GameObjectType::CubePortal) mode = SimMode::Cube;
+                else if (id == 13 || type == GameObjectType::ShipPortal) mode = SimMode::Ship;
+                else if (id == 47 || type == GameObjectType::BallPortal) mode = SimMode::Ball;
+                else if (id == 111 || type == GameObjectType::UfoPortal) mode = SimMode::Ufo;
+                else if (id == 660 || type == GameObjectType::WavePortal) mode = SimMode::Wave;
+                else if (type == GameObjectType::Hazard) {
                     res.survived = false; res.points.push_back(pos); return res;
-                } else if (type == GameObjectType::Solid) {
-                    if (gravDir > 0 && prevPos.y >= oBox.getMaxY() + halfSize * 0.3f) {
+                } else if (type == GameObjectType::Solid && !obj->m_isDecoration) {
+                    if (gravDir > 0 && prevPos.y >= oBox.getMaxY() + halfSize * 0.25f) {
                         pos.y = oBox.getMaxY() + halfSize; yVel = 0.0; onSurface = true;
-                    } else if (gravDir < 0 && prevPos.y <= oBox.getMinY() - halfSize * 0.3f) {
+                    } else if (gravDir < 0 && prevPos.y <= oBox.getMinY() - halfSize * 0.25f) {
                         pos.y = oBox.getMinY() - halfSize; yVel = 0.0; onSurface = true;
                     } else {
                         res.survived = false; res.points.push_back(pos); return res;
                     }
-                } else if (type == GameObjectType::YellowJumpPad) { yVel = 15.5 * gravDir; onSurface = false; }
-                else if (type == GameObjectType::PinkJumpPad) { yVel = 11.2 * gravDir; onSurface = false; }
-                else if (justClicked && type == GameObjectType::YellowJumpRing) { yVel = 11.2 * gravDir; onSurface = false; }
-                else if (type == GameObjectType::InverseGravityPortal) { upsideDown = true; gravDir = -1.0f; }
-                else if (type == GameObjectType::NormalGravityPortal) { upsideDown = false; gravDir = 1.0f; }
-                else if (type == GameObjectType::CubePortal) mode = SimMode::Cube;
-                else if (type == GameObjectType::ShipPortal) mode = SimMode::Ship;
-                else if (type == GameObjectType::BallPortal) mode = SimMode::Ball;
-                else if (type == GameObjectType::UfoPortal) mode = SimMode::Ufo;
-                else if (type == GameObjectType::WavePortal) mode = SimMode::Wave;
+                }
             }
             res.survivalSteps++;
             res.points.push_back(pos);
@@ -261,6 +276,7 @@ class $modify(MyPlayLayer, PlayLayer) {
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead) return;
+        if (m_fields->rollbackCooldown > 0) m_fields->rollbackCooldown--;
 
         AutoBot::currentFrame++;
         auto player = this->m_player1;
@@ -269,16 +285,11 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         const int steps = 85;
         std::vector<std::vector<bool>> patterns(6, std::vector<bool>(steps, false));
-        // 1: Зажать (Hold)
         std::fill(patterns.at(1).begin(), patterns.at(1).end(), true);
-        // 2: Прыжок сейчас (1 клик)
         for (int i = 0; i < 3; ++i) patterns.at(2).at(i) = true;
-        // 3: Поздний прыжок (через 8 тиков)
         for (int i = 8; i < 11; ++i) patterns.at(3).at(i) = true;
-        // 4: 2 клика
         for (int i = 0; i < 3; ++i) patterns.at(4).at(i) = true;
         for (int i = 18; i < 21; ++i) patterns.at(4).at(i) = true;
-        // 5: 3 клика
         patterns.at(5) = patterns.at(4);
         for (int i = 36; i < 39; ++i) patterns.at(5).at(i) = true;
 
@@ -302,19 +313,35 @@ class $modify(MyPlayLayer, PlayLayer) {
                 }
             }
         }
-
         if (AutoBot::isRecording) {
-            if (results.at(0).survived && AutoBot::deathMemory[AutoBot::currentFrame] == 0) {
-                AutoBot::setHold(player, false);
-            } else {
-                int bestBranch = 0, bestScore = -1;
-                for (int i = 0; i < 6; ++i) {
-                    int penalty = (i == 2 && AutoBot::deathMemory[AutoBot::currentFrame] > 0) ? 30 : 0;
-                    int score = results.at(i).survivalSteps - penalty;
-                    if (score > bestScore) { bestScore = score; bestBranch = i; }
+            bool isFlight = player->m_isShip || player->m_isDart;
+            int chosen = 0;
+
+            if (!AutoBot::checkpoints.empty() && AutoBot::checkpoints.back().forcedBranch != -1) {
+                chosen = AutoBot::checkpoints.back().forcedBranch;
+                if (AutoBot::currentFrame - AutoBot::checkpoints.back().frame > 10) {
+                    AutoBot::checkpoints.back().forcedBranch = -1;
                 }
-                AutoBot::setHold(player, patterns.at(bestBranch).at(0));
+            } else if (!isFlight && results.at(0).survivalSteps > 16) {
+                chosen = 0;
+            } else {
+                std::vector<int> priority = { 0, 2, 3, 4, 5, 1 };
+                int bestSteps = -1;
+                for (int idx : priority) {
+                    if (results.at(idx).survived) { chosen = idx; break; }
+                    if (results.at(idx).survivalSteps > bestSteps) { bestSteps = results.at(idx).survivalSteps; chosen = idx; }
+                }
             }
+
+            bool wantHold = patterns.at(chosen).at(0);
+            if ((wantHold && !AutoBot::currentHold) || AutoBot::currentFrame % 240 == 0 || AutoBot::checkpoints.empty()) {
+                AutoBot::checkpoints.push_back({
+                    AutoBot::currentFrame, startPos, player->m_yVelocity, player->m_isUpsideDown,
+                    player->m_isShip, player->m_isBall, player->m_isBird, player->m_isDart,
+                    AutoBot::actions.size(), -1
+                });
+            }
+            AutoBot::setHold(player, wantHold);
         }
 
         if (AutoBot::isPlaying) {
@@ -328,8 +355,28 @@ class $modify(MyPlayLayer, PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* obj) {
-        if (AutoBot::isRecording && !AutoBot::actions.empty()) {
-            AutoBot::deathMemory[AutoBot::actions.back().frame]++;
+        if (AutoBot::isRecording && !AutoBot::checkpoints.empty() && m_fields->rollbackCooldown == 0) {
+            auto& cp = AutoBot::checkpoints.back();
+            cp.forcedBranch = (cp.forcedBranch == -1) ? 2 : (cp.forcedBranch + 1);
+            if (cp.forcedBranch > 5 && AutoBot::checkpoints.size() > 1) {
+                AutoBot::checkpoints.pop_back();
+                AutoBot::checkpoints.back().forcedBranch = 2;
+            }
+            auto& active = AutoBot::checkpoints.back();
+            AutoBot::currentFrame = active.frame;
+            AutoBot::actions.resize(active.actionCount);
+            AutoBot::currentHold = false;
+            player->m_isDead = false;
+            this->m_isDead = false;
+            player->setPosition(active.pos);
+            player->m_yVelocity = active.yVelocity;
+            player->m_isUpsideDown = active.isUpsideDown;
+            player->m_isShip = active.isShip;
+            player->m_isBall = active.isBall;
+            player->m_isBird = active.isBird;
+            player->m_isDart = active.isDart;
+            m_fields->rollbackCooldown = 5;
+            return;
         }
         PlayLayer::destroyPlayer(player, obj);
     }
