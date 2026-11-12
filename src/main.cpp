@@ -1,7 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
-#include <Geode/ui/Popup.hpp>
 #include <vector>
 #include <fstream>
 #include <algorithm>
@@ -31,39 +30,60 @@ namespace AutoBot {
     }
 }
 
-// Компактное окно настроек с переключателями ON / OFF (под Geode v6)
-class AutoBotPopup : public geode::Popup {
+// Компактное окно настроек на нативном FLAlertLayer (работает на любой версии Geode)
+class AutoBotPopup : public FLAlertLayer {
 protected:
     bool init() {
-        if (!Popup::init(280.f, 190.f)) return false;
+        if (!FLAlertLayer::init(150)) return false;
 
-        this->setTitle("AutoBot Control Panel");
+        auto winSize = CCDirector::sharedDirector()->getWinSize();
 
-        auto winSize = m_mainLayer->getContentSize();
+        auto bg = CCScale9Sprite::create("GJ_square01.png");
+        bg->setContentSize({ 290.f, 200.f });
+        bg->setPosition(winSize / 2.f);
+        m_mainLayer->addChild(bg);
+
+        auto title = CCLabelBMFont::create("AutoBot Control Panel", "goldFont.fnt");
+        title->setScale(0.7f);
+        title->setPosition({ winSize.width / 2.f, winSize.height / 2.f + 75.f });
+        m_mainLayer->addChild(title);
+
         auto menu = CCMenu::create();
         menu->setPosition({ 0.f, 0.f });
         m_mainLayer->addChild(menu);
 
-        auto addToggle = [&](const char* labelText, float yPos, bool initialState, SEL_MenuHandler callback) {
+        // Кнопка закрытия (крестик)
+        auto closeSpr = CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png");
+        closeSpr->setScale(0.8f);
+        auto closeBtn = CCMenuItemSpriteExtra::create(closeSpr, this, menu_selector(AutoBotPopup::onClose));
+        closeBtn->setPosition({ winSize.width / 2.f - 135.f, winSize.height / 2.f + 90.f });
+        menu->addChild(closeBtn);
+
+        auto addToggle = [&](const char* labelText, float offsetY, bool initialState, SEL_MenuHandler callback) {
             auto label = CCLabelBMFont::create(labelText, "bigFont.fnt");
-            label->setScale(0.45f);
+            label->setScale(0.42f);
             label->setAnchorPoint({ 0.f, 0.5f });
-            label->setPosition({ 30.f, yPos });
+            label->setPosition({ winSize.width / 2.f - 120.f, winSize.height / 2.f + offsetY });
             m_mainLayer->addChild(label);
 
-            auto onSpr = ButtonSprite::create("ON", "goldFont.fnt", "GJ_button_01.png", 0.6f);
-            auto offSpr = ButtonSprite::create("OFF", "goldFont.fnt", "GJ_button_06.png", 0.6f);
+            auto onSpr = ButtonSprite::create("ON", "goldFont.fnt", "GJ_button_01.png", 0.55f);
+            auto offSpr = ButtonSprite::create("OFF", "goldFont.fnt", "GJ_button_06.png", 0.55f);
             auto toggler = CCMenuItemToggler::create(offSpr, onSpr, this, callback);
             toggler->toggle(initialState);
-            toggler->setPosition({ winSize.width - 55.f, yPos });
+            toggler->setPosition({ winSize.width / 2.f + 95.f, winSize.height / 2.f + offsetY });
             menu->addChild(toggler);
         };
 
-        addToggle("Show 6-Way Paths:", winSize.height - 65.f, AutoBot::showTrajectories, menu_selector(AutoBotPopup::onTogglePaths));
-        addToggle("AutoBot Path Finder:", winSize.height - 105.f, AutoBot::isRecording, menu_selector(AutoBotPopup::onToggleRecord));
-        addToggle("Playback (Showcase):", winSize.height - 145.f, AutoBot::isPlaying, menu_selector(AutoBotPopup::onTogglePlay));
+        addToggle("Show 6-Way Paths:", 25.f, AutoBot::showTrajectories, menu_selector(AutoBotPopup::onTogglePaths));
+        addToggle("AutoBot Path Finder:", -15.f, AutoBot::isRecording, menu_selector(AutoBotPopup::onToggleRecord));
+        addToggle("Playback (Showcase):", -55.f, AutoBot::isPlaying, menu_selector(AutoBotPopup::onTogglePlay));
 
+        this->setKeypadEnabled(true);
         return true;
+    }
+
+    void onClose(CCObject*) {
+        this->keyBackClicked();
     }
 
     void onTogglePaths(CCObject* sender) {
