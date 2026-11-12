@@ -367,7 +367,6 @@ class $modify(MyPlayLayer, PlayLayer) {
             AutoBot::actions.resize(active.actionCount);
             AutoBot::currentHold = false;
             player->m_isDead = false;
-            this->m_isDead = false;
             player->setPosition(active.pos);
             player->m_yVelocity = active.yVelocity;
             player->m_isUpsideDown = active.isUpsideDown;
