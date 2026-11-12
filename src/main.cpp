@@ -190,6 +190,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         m_fields->isSimulating = true;
         bool simHolding = AutoBot::currentHold;
         const float stepDt = 1.0f / 60.0f;
+        float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
+        float moveSpeedX = 311.58f * mult; // Точная скорость GD в пикселях в секунду
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
             bool wantHold = holdPattern.at(step);
@@ -197,8 +199,13 @@ class $modify(MyPlayLayer, PlayLayer) {
             else if (!wantHold && simHolding) { player->releaseButton(PlayerButton::Jump); simHolding = false; }
 
             for (int sub = 0; sub < 4; ++sub) {
-                player->update(stepDt / 4.0f);
-                this->checkCollisions(player, stepDt / 4.0f, false);
+                float subDt = stepDt / 4.0f;
+                CCPoint p = player->getPosition();
+                p.x += moveSpeedX * subDt;
+                player->setPosition(p);
+
+                player->update(subDt);
+                this->checkCollisions(player, subDt, false);
                 if (player->m_isDead) break;
             }
 
@@ -229,6 +236,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         return res;
     }
+
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead || m_fields->isSimulating) return;
