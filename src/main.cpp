@@ -33,8 +33,7 @@ namespace AutoBot {
         if (currentHold != hold) {
             currentHold = hold;
             actions.push_back({ currentFrame, hold });
-            if (hold) layer->pushButton(1, true);
-            else layer->releaseButton(1, true);
+            layer->handleButton(hold, 1, true);
         }
     }
 
@@ -310,7 +309,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         if (AutoBot::isRecording) {
             if (!this->m_isPracticeMode) this->togglePracticeMode(true);
-            unsigned int cpCount = this->m_checkpoints ? this->m_checkpoints->count() : 0;
+            unsigned int cpCount = this->m_checkpointArray ? this->m_checkpointArray->count() : 0;
             while (AutoBot::checkpoints.size() < cpCount) {
                 AutoBot::checkpoints.push_back({ AutoBot::currentFrame, AutoBot::actions.size(), -1 });
             }
@@ -339,8 +338,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (AutoBot::isPlaying) {
             for (const auto& act : AutoBot::actions) {
                 if (act.frame == AutoBot::currentFrame) {
-                    if (act.hold) this->pushButton(1, true);
-                    else this->releaseButton(1, true);
+                    this->handleButton(act.hold, 1, true);
                 }
             }
         }
