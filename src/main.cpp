@@ -229,14 +229,14 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool origDart = player->m_isDart;
         bool origRobot = player->m_isRobot;
         bool origSpider = player->m_isSpider;
-        bool origHolding = player->m_isHolding;
         float origRot = player->getRotation();
 
-        bool streakEnabled = player->m_isTrailEnabled;
+        bool wasTrailVisible = player->m_regularTrail ? player->m_regularTrail->isVisible() : false;
         if (player->m_regularTrail) player->m_regularTrail->setVisible(false);
 
         AutoBot::isSimulating = true;
-        bool simHolding = AutoBot::isRecording ? AutoBot::currentHold : false;
+        bool origHolding = AutoBot::isRecording ? AutoBot::currentHold : false;
+        bool simHolding = origHolding;
         float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
         const float subDt = (1.0f / 60.0f) / 4.0f;
 
@@ -259,6 +259,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             if (player->m_isDead) { res.survived = false; break; }
             res.survivalSteps++;
         }
+
         if (simHolding != origHolding) {
             if (origHolding) player->pushButton(PlayerButton::Jump);
             else player->releaseButton(PlayerButton::Jump);
@@ -278,10 +279,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         player->m_isDart = origDart;
         player->m_isRobot = origRobot;
         player->m_isSpider = origSpider;
-        player->m_isHolding = origHolding;
         player->setRotation(origRot);
 
-        if (player->m_regularTrail && streakEnabled) {
+        if (player->m_regularTrail && wasTrailVisible) {
             player->m_regularTrail->reset();
             player->m_regularTrail->setVisible(true);
         }
@@ -300,18 +300,18 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         const int steps = 85;
         std::vector<std::vector<bool>> patterns(6, std::vector<bool>(steps, false));
-        std::fill(patterns[1].begin(), patterns[1].end(), true);
-        for (int i = 0; i < 3; ++i) patterns[2][i] = true;
-        for (int i = 6; i < 9; ++i) patterns[3][i] = true;
-        for (int i = 14; i < 17; ++i) patterns[4][i] = true;
-        for (int i = 0; i < 3; ++i) patterns[5][i] = true;
-        for (int i = 20; i < 23; ++i) patterns[5][i] = true;
+        std::fill(patterns.at(1).begin(), patterns.at(1).end(), true);
+        for (int i = 0; i < 3; ++i) patterns.at(2).at(i) = true;
+        for (int i = 6; i < 9; ++i) patterns.at(3).at(i) = true;
+        for (int i = 14; i < 17; ++i) patterns.at(4).at(i) = true;
+        for (int i = 0; i < 3; ++i) patterns.at(5).at(i) = true;
+        for (int i = 20; i < 23; ++i) patterns.at(5).at(i) = true;
 
         bool isFlight = player->m_isShip || player->m_isDart;
         int branchCount = isFlight ? 2 : 6;
 
         std::vector<BranchResult> results(branchCount);
-        for (int i = 0; i < branchCount; ++i) results[i] = simulateBranch(player, patterns[i]);
+        for (int i = 0; i < branchCount; ++i) results.at(i) = simulateBranch(player, patterns.at(i));
 
         if (AutoBot::trajectoryNode) {
             AutoBot::trajectoryNode->clear();
@@ -323,15 +323,15 @@ class $modify(MyPlayLayer, PlayLayer) {
                 };
                 float halfBox = 15.0f * player->getScale();
                 for (int i = 0; i < branchCount; ++i) {
-                    const auto& pts = results[i].points;
+                    const auto& pts = results.at(i).points;
                     if (pts.empty()) continue;
                     CCPoint prev = startPos;
                     for (const auto& pt : pts) {
-                        AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors[i]);
+                        AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors.at(i));
                         prev = pt;
                     }
                     CCPoint endPt = pts.back();
-                    ccColor4F boxCol = results[i].survived ? colors[i] : ccColor4F{ 1.f, 0.f, 0.f, 0.95f };
+                    ccColor4F boxCol = results.at(i).survived ? colors.at(i) : ccColor4F{ 1.f, 0.f, 0.f, 0.95f };
                     AutoBot::trajectoryNode->drawRect(
                         { endPt.x - halfBox, endPt.y - halfBox },
                         { endPt.x + halfBox, endPt.y + halfBox },
@@ -355,12 +355,12 @@ class $modify(MyPlayLayer, PlayLayer) {
                 int chosen = 0, bestScore = -999;
                 for (int idx = 0; idx < branchCount; ++idx) {
                     int penalty = (mask & (1 << idx)) ? 40 : 0;
-                    if (!isFlight && idx != 0 && results[0].survivalSteps > 16 && !(mask & 1)) penalty += 50;
-                    int score = results[idx].survivalSteps - penalty;
+                    if (!isFlight && idx != 0 && results.at(0).survivalSteps > 16 && !(mask & 1)) penalty += 50;
+                    int score = results.at(idx).survivalSteps - penalty;
                     if (score > bestScore) { bestScore = score; chosen = idx; }
                 }
                 if (!AutoBot::checkpoints.empty()) AutoBot::checkpoints.back().activeBranch = chosen;
-                AutoBot::setHold(this, patterns[chosen][0]);
+                AutoBot::setHold(this, patterns.at(chosen).at(0));
             }
         }
 
