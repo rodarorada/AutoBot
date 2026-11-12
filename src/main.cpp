@@ -175,7 +175,6 @@ class $modify(MyPlayLayer, PlayLayer) {
     BranchResult simulateBranch(PlayerObject* player, const std::vector<bool>& holdPattern) {
         BranchResult res{ true, 0, {} };
 
-        // Сохраняем полное состояние реального игрока перед прогоном ветки
         CCPoint origPos = player->getPosition();
         double origYVel = player->m_yVelocity;
         bool origOnGround = player->m_isOnGround;
@@ -186,18 +185,17 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool origDart = player->m_isDart;
         bool origRobot = player->m_isRobot;
         bool origSpider = player->m_isSpider;
-        bool origHolding = player->m_isHolding;
         float origRot = player->getRotation();
 
         m_fields->isSimulating = true;
+        bool simHolding = AutoBot::currentHold;
         const float stepDt = 1.0f / 60.0f;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
             bool wantHold = holdPattern.at(step);
-            if (wantHold && !player->m_isHolding) player->pushButton(PlayerButton::Jump);
-            else if (!wantHold && player->m_isHolding) player->releaseButton(PlayerButton::Jump);
+            if (wantHold && !simHolding) { player->pushButton(PlayerButton::Jump); simHolding = true; }
+            else if (!wantHold && simHolding) { player->releaseButton(PlayerButton::Jump); simHolding = false; }
 
-            // Прогоняем 4 нативных подшага физики GD (240 TPS)
             for (int sub = 0; sub < 4; ++sub) {
                 player->update(stepDt / 4.0f);
                 this->checkCollisions(player, stepDt / 4.0f, false);
@@ -206,14 +204,15 @@ class $modify(MyPlayLayer, PlayLayer) {
 
             CCPoint curPos = player->getPosition();
             res.points.push_back(curPos);
-            if (player->m_isDead) {
-                res.survived = false;
-                break;
-            }
+            if (player->m_isDead) { res.survived = false; break; }
             res.survivalSteps++;
         }
 
-        // Возвращаем реального игрока в исходное состояние
+        if (simHolding != AutoBot::currentHold) {
+            if (AutoBot::currentHold) player->pushButton(PlayerButton::Jump);
+            else player->releaseButton(PlayerButton::Jump);
+        }
+
         player->m_isDead = false;
         player->setPosition(origPos);
         player->m_yVelocity = origYVel;
@@ -225,7 +224,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         player->m_isDart = origDart;
         player->m_isRobot = origRobot;
         player->m_isSpider = origSpider;
-        player->m_isHolding = origHolding;
         player->setRotation(origRot);
         m_fields->isSimulating = false;
 
