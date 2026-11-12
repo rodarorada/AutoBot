@@ -33,6 +33,7 @@ namespace AutoBot {
     bool showTrajectories = true;
     bool isSimulating = false;
     bool botInput = false;
+    bool userHolding = false;
 
     int currentFrame = 0;
     int graceFrames = 0;
@@ -112,6 +113,7 @@ protected:
     void releaseBotInput() {
         AutoBot::graceFrames = 0;
         AutoBot::currentHold = false;
+        AutoBot::userHolding = false;
         if (auto pl = PlayLayer::get()) {
             AutoBot::botInput = true;
             pl->handleButton(false, 1, true);
@@ -172,11 +174,14 @@ class $modify(MyPlayerObject, PlayerObject) {
 
 class $modify(MyBaseGameLayer, GJBaseGameLayer) {
     void handleButton(bool down, int button, bool isPlayer1) {
+        if (AutoBot::isSimulating) return;
+
         if (!AutoBot::isRecording && !AutoBot::isPlaying) {
+            if (isPlayer1 && button == 1) AutoBot::userHolding = down;
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
         }
-        if (AutoBot::isSimulating) return;
+
         if (AutoBot::botInput) {
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
@@ -235,22 +240,54 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (player->m_regularTrail) player->m_regularTrail->setVisible(false);
 
         AutoBot::isSimulating = true;
-        bool origHolding = AutoBot::isRecording ? AutoBot::currentHold : false;
+        bool origHolding = AutoBot::isRecording ? AutoBot::currentHold : AutoBot::userHolding;
         bool simHolding = origHolding;
         float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
         const float subDt = (1.0f / 60.0f) / 4.0f;
-
         for (size_t step = 0; step < holdPattern.size(); ++step) {
-            bool wantHold = holdPattern[step];
+            bool wantHold = holdPattern.at(step);
+            bool justPressed = (wantHold && !simHolding);
             if (wantHold && !simHolding) { player->pushButton(PlayerButton::Jump); simHolding = true; }
             else if (!wantHold && simHolding) { player->releaseButton(PlayerButton::Jump); simHolding = false; }
 
             for (int sub = 0; sub < 4; ++sub) {
                 player->m_lastPosition = player->m_position;
-                player->updateJump(subDt);
-                player->update(subDt);
+                float gravDir = player->m_isUpsideDown ? -1.0f : 1.0f;
+
+                if (player->m_isDart) {
+                    float speedX = 311.58f * mult;
+                    player->m_yVelocity = (simHolding ? speedX : -speedX) * gravDir;
+                } else if (player->m_isShip) {
+                    float accel = simHolding ? 1350.0f : -1100.0f;
+                    player->m_yVelocity += accel * gravDir * subDt;
+                    player->m_yVelocity = std::clamp(player->m_yVelocity, -550.0, 550.0);
+                } else if (player->m_isBird) {
+                    if (justPressed && sub == 0) player->m_yVelocity = 430.0 * gravDir;
+                    player->m_yVelocity -= 1950.0 * gravDir * subDt;
+                } else {
+                    if ((simHolding && player->m_isOnGround) || (justPressed && sub == 0 && player->m_isOnGround)) {
+                        if (player->m_isBall) {
+                            player->m_isUpsideDown = !player->m_isUpsideDown;
+                            gravDir = player->m_isUpsideDown ? -1.0f : 1.0f;
+                            player->m_yVelocity = -200.0 * gravDir;
+                        } else {
+                            player->m_yVelocity = 573.0 * gravDir;
+                        }
+                        player->m_isOnGround = false;
+                    }
+                    player->m_yVelocity -= 2794.0 * gravDir * subDt;
+                    if (gravDir > 0 && player->m_yVelocity < -810.0) player->m_yVelocity = -810.0;
+                    if (gravDir < 0 && player->m_yVelocity > 810.0) player->m_yVelocity = 810.0;
+                }
+
                 player->m_position.x += 311.58f * mult * subDt;
                 player->m_position.y += static_cast<float>(player->m_yVelocity) * subDt;
+
+                if (!player->m_isUpsideDown && player->m_position.y <= 105.0f) {
+                    player->m_position.y = 105.0f;
+                    player->m_yVelocity = 0.0;
+                    player->m_isOnGround = true;
+                }
                 this->checkCollisions(player, subDt, false);
                 if (player->m_isDead) break;
             }
@@ -289,7 +326,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         AutoBot::isSimulating = false;
         return res;
     }
-
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead || AutoBot::isSimulating) return;
