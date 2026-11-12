@@ -267,31 +267,36 @@ class $modify(MyPlayLayer, PlayLayer) {
         CCPoint startPos = player->getPosition();
         collectNearbyObjects(startPos.x);
 
-        const int steps = 85; // Длинное ОП (в 2 раза длиннее)
+        const int steps = 85;
         std::vector<std::vector<bool>> patterns(6, std::vector<bool>(steps, false));
-        std::fill(patterns.begin(), patterns.end(), true); // 1: Зажать (Hold)
-        for (int i = 0; i < 3; ++i) patterns[i] = true;     // 2: Прыжок сейчас
-        for (int i = 8; i < 11; ++i) patterns[i] = true;    // 3: Поздний прыжок (через 8 тиков)
-        for (int i = 0; i < 3; ++i) patterns[i] = true;     // 4: 2 клика
-        for (int i = 18; i < 21; ++i) patterns[i] = true;
-        patterns = patterns;                                  // 5: 3 клика
-        for (int i = 36; i < 39; ++i) patterns[i] = true;
+        // 1: Зажать (Hold)
+        std::fill(patterns.at(1).begin(), patterns.at(1).end(), true);
+        // 2: Прыжок сейчас (1 клик)
+        for (int i = 0; i < 3; ++i) patterns.at(2).at(i) = true;
+        // 3: Поздний прыжок (через 8 тиков)
+        for (int i = 8; i < 11; ++i) patterns.at(3).at(i) = true;
+        // 4: 2 клика
+        for (int i = 0; i < 3; ++i) patterns.at(4).at(i) = true;
+        for (int i = 18; i < 21; ++i) patterns.at(4).at(i) = true;
+        // 5: 3 клика
+        patterns.at(5) = patterns.at(4);
+        for (int i = 36; i < 39; ++i) patterns.at(5).at(i) = true;
 
         std::vector<BranchResult> results(6);
-        for (int i = 0; i < 6; ++i) results[i] = simulateBranch(player, patterns[i]);
+        for (int i = 0; i < 6; ++i) results.at(i) = simulateBranch(player, patterns.at(i));
 
         if (AutoBot::trajectoryNode) {
             AutoBot::trajectoryNode->clear();
             if (AutoBot::showTrajectories) {
-                ccColor4F colors = {
+                std::vector<ccColor4F> colors = {
                     { 0.1f, 1.0f, 0.1f, 0.8f }, { 1.0f, 0.1f, 0.1f, 0.8f },
                     { 1.0f, 0.9f, 0.1f, 0.8f }, { 0.1f, 0.9f, 1.0f, 0.8f },
                     { 0.8f, 0.2f, 1.0f, 0.8f }, { 1.0f, 0.5f, 0.0f, 0.8f }
                 };
                 for (int i = 0; i < 6; ++i) {
                     CCPoint prev = startPos;
-                    for (const auto& pt : results[i].points) {
-                        AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors[i]); // Тонкие ЛОП как в MegaHack
+                    for (const auto& pt : results.at(i).points) {
+                        AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors.at(i));
                         prev = pt;
                     }
                 }
@@ -299,17 +304,16 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         if (AutoBot::isRecording) {
-            // Строго не прыгаем, если путь без нажатия (ветка 0) полностью чист
-            if (results.survived && AutoBot::deathMemory[AutoBot::currentFrame] == 0) {
+            if (results.at(0).survived && AutoBot::deathMemory[AutoBot::currentFrame] == 0) {
                 AutoBot::setHold(player, false);
             } else {
                 int bestBranch = 0, bestScore = -1;
                 for (int i = 0; i < 6; ++i) {
                     int penalty = (i == 2 && AutoBot::deathMemory[AutoBot::currentFrame] > 0) ? 30 : 0;
-                    int score = results[i].survivalSteps - penalty;
+                    int score = results.at(i).survivalSteps - penalty;
                     if (score > bestScore) { bestScore = score; bestBranch = i; }
                 }
-                AutoBot::setHold(player, patterns[bestBranch]);
+                AutoBot::setHold(player, patterns.at(bestBranch).at(0));
             }
         }
 
@@ -325,7 +329,6 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void destroyPlayer(PlayerObject* player, GameObject* obj) {
         if (AutoBot::isRecording && !AutoBot::actions.empty()) {
-            // Запоминаем кадр последнего прыжка перед смертью, чтобы в следующей попытке прыгнуть в другой тайминг
             AutoBot::deathMemory[AutoBot::actions.back().frame]++;
         }
         PlayLayer::destroyPlayer(player, obj);
