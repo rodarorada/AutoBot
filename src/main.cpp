@@ -1,6 +1,8 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
+#include <Geode/modify/PlayerObject.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <vector>
 #include <fstream>
 #include <algorithm>
@@ -19,10 +21,18 @@ struct BotCheckpoint {
     int activeBranch;
 };
 
+struct BranchResult {
+    bool survived;
+    int survivalSteps;
+    std::vector<CCPoint> points;
+};
+
 namespace AutoBot {
     bool isRecording = false;
     bool isPlaying = false;
     bool showTrajectories = true;
+    bool isSimulating = false;
+    bool botInput = false;
 
     int currentFrame = 0;
     int graceFrames = 0;
@@ -35,7 +45,9 @@ namespace AutoBot {
         if (currentHold != hold) {
             currentHold = hold;
             actions.push_back({ currentFrame, hold });
+            botInput = true;
             layer->handleButton(hold, 1, true);
+            botInput = false;
         }
     }
 
@@ -45,7 +57,6 @@ namespace AutoBot {
         for (const auto& act : actions) file << act.frame << " " << act.hold << "\n";
     }
 }
-
 class AutoBotPopup : public FLAlertLayer {
 protected:
     bool init() {
@@ -94,14 +105,33 @@ protected:
         this->setKeypadEnabled(true);
         return true;
     }
+
     void onClose(CCObject*) { this->keyBackClicked(); }
     void onTogglePaths(CCObject* s) { AutoBot::showTrajectories = !static_cast<CCMenuItemToggler*>(s)->isToggled(); }
+
+    void releaseBotInput() {
+        AutoBot::graceFrames = 0;
+        AutoBot::currentHold = false;
+        if (auto pl = PlayLayer::get()) {
+            AutoBot::botInput = true;
+            pl->handleButton(false, 1, true);
+            AutoBot::botInput = false;
+        }
+    }
+
     void onToggleRecord(CCObject* s) {
         AutoBot::isRecording = !static_cast<CCMenuItemToggler*>(s)->isToggled();
-        if (AutoBot::isRecording) { AutoBot::isPlaying = false; AutoBot::actions.clear(); AutoBot::checkpoints.clear(); }
+        releaseBotInput();
+        if (AutoBot::isRecording) {
+            AutoBot::isPlaying = false;
+            AutoBot::actions.clear();
+            AutoBot::checkpoints.clear();
+        }
     }
+
     void onTogglePlay(CCObject* s) {
         AutoBot::isPlaying = !static_cast<CCMenuItemToggler*>(s)->isToggled();
+        releaseBotInput();
         if (AutoBot::isPlaying) AutoBot::isRecording = false;
     }
 
@@ -127,18 +157,33 @@ class $modify(MyPauseLayer, PauseLayer) {
     }
     void onOpenAutoBot(CCObject*) { AutoBotPopup::create()->show(); }
 };
+class $modify(MyPlayerObject, PlayerObject) {
+    void update(float dt) {
+        PlayerObject::update(dt);
+        if (AutoBot::isSimulating) {
+            if (this->m_playerGroundParticles) this->m_playerGroundParticles->stopSystem();
+            if (this->m_trailingParticles) this->m_trailingParticles->stopSystem();
+            if (this->m_shipClickParticles) this->m_shipClickParticles->stopSystem();
+            if (this->m_landParticles0) this->m_landParticles0->stopSystem();
+            if (this->m_landParticles1) this->m_landParticles1->stopSystem();
+        }
+    }
+};
 
-struct BranchResult {
-    bool survived;
-    int survivalSteps;
-    std::vector<CCPoint> points;
+class $modify(MyBaseGameLayer, GJBaseGameLayer) {
+    void handleButton(bool down, int button, bool isPlayer1) {
+        if (!AutoBot::isRecording && !AutoBot::isPlaying) {
+            GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            return;
+        }
+        if (AutoBot::isSimulating) return;
+        if (AutoBot::botInput) {
+            GJBaseGameLayer::handleButton(down, button, isPlayer1);
+        }
+    }
 };
 
 class $modify(MyPlayLayer, PlayLayer) {
-    struct Fields {
-        bool isSimulating = false;
-    };
-
     bool init(GJGameLevel* level, bool dontCreateObjects) {
         if (!PlayLayer::init(level, dontCreateObjects)) return false;
         AutoBot::trajectoryNode = CCDrawNode::create();
@@ -153,7 +198,10 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (AutoBot::isRecording) {
             AutoBot::currentHold = false;
             AutoBot::graceFrames = 10;
+            AutoBot::botInput = true;
             this->handleButton(false, 1, true);
+            AutoBot::botInput = false;
+
             if (!AutoBot::checkpoints.empty()) {
                 AutoBot::currentFrame = AutoBot::checkpoints.back().frame;
                 AutoBot::actions.resize(AutoBot::checkpoints.back().actionCount);
@@ -165,12 +213,14 @@ class $modify(MyPlayLayer, PlayLayer) {
             AutoBot::currentFrame = 0;
         }
     }
+
     BranchResult simulateBranch(PlayerObject* player, const std::vector<bool>& holdPattern) {
         BranchResult res{ true, 0, {} };
 
         CCPoint origPos = player->m_position;
         CCPoint origLastPos = player->m_lastPosition;
         double origYVel = player->m_yVelocity;
+        double origGravity = player->m_gravity;
         bool origOnGround = player->m_isOnGround;
         bool origUpsideDown = player->m_isUpsideDown;
         bool origShip = player->m_isShip;
@@ -179,25 +229,28 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool origDart = player->m_isDart;
         bool origRobot = player->m_isRobot;
         bool origSpider = player->m_isSpider;
+        bool origHolding = player->m_isHolding;
         float origRot = player->getRotation();
 
-        m_fields->isSimulating = true;
+        bool streakEnabled = player->m_isTrailEnabled;
+        if (player->m_regularTrail) player->m_regularTrail->setVisible(false);
+
+        AutoBot::isSimulating = true;
         bool simHolding = AutoBot::isRecording ? AutoBot::currentHold : false;
         float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
-        const float subDt = 1.0f / 240.0f;
+        const float subDt = (1.0f / 60.0f) / 4.0f;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
-            bool wantHold = holdPattern.at(step);
+            bool wantHold = holdPattern[step];
             if (wantHold && !simHolding) { player->pushButton(PlayerButton::Jump); simHolding = true; }
             else if (!wantHold && simHolding) { player->releaseButton(PlayerButton::Jump); simHolding = false; }
 
             for (int sub = 0; sub < 4; ++sub) {
                 player->m_lastPosition = player->m_position;
-                player->m_position.x += 311.58f * mult * subDt;
                 player->updateJump(subDt);
                 player->update(subDt);
+                player->m_position.x += 311.58f * mult * subDt;
                 player->m_position.y += static_cast<float>(player->m_yVelocity) * subDt;
-                player->setPosition(player->m_position);
                 this->checkCollisions(player, subDt, false);
                 if (player->m_isDead) break;
             }
@@ -206,12 +259,9 @@ class $modify(MyPlayLayer, PlayLayer) {
             if (player->m_isDead) { res.survived = false; break; }
             res.survivalSteps++;
         }
-
-        if (AutoBot::isRecording && simHolding != AutoBot::currentHold) {
-            if (AutoBot::currentHold) player->pushButton(PlayerButton::Jump);
+        if (simHolding != origHolding) {
+            if (origHolding) player->pushButton(PlayerButton::Jump);
             else player->releaseButton(PlayerButton::Jump);
-        } else if (!AutoBot::isRecording && simHolding) {
-            player->releaseButton(PlayerButton::Jump);
         }
 
         player->m_isDead = false;
@@ -219,6 +269,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         player->m_lastPosition = origLastPos;
         player->setPosition(origPos);
         player->m_yVelocity = origYVel;
+        player->m_gravity = origGravity;
         player->m_isOnGround = origOnGround;
         player->m_isUpsideDown = origUpsideDown;
         player->m_isShip = origShip;
@@ -227,15 +278,21 @@ class $modify(MyPlayLayer, PlayLayer) {
         player->m_isDart = origDart;
         player->m_isRobot = origRobot;
         player->m_isSpider = origSpider;
+        player->m_isHolding = origHolding;
         player->setRotation(origRot);
-        m_fields->isSimulating = false;
 
+        if (player->m_regularTrail && streakEnabled) {
+            player->m_regularTrail->reset();
+            player->m_regularTrail->setVisible(true);
+        }
+
+        AutoBot::isSimulating = false;
         return res;
     }
 
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
-        if (!this->m_player1 || this->m_player1->m_isDead || m_fields->isSimulating) return;
+        if (!this->m_player1 || this->m_player1->m_isDead || AutoBot::isSimulating) return;
 
         AutoBot::currentFrame++;
         auto player = this->m_player1;
@@ -243,18 +300,18 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         const int steps = 85;
         std::vector<std::vector<bool>> patterns(6, std::vector<bool>(steps, false));
-        std::fill(patterns.at(1).begin(), patterns.at(1).end(), true);
-        for (int i = 0; i < 3; ++i) patterns.at(2).at(i) = true;
-        for (int i = 6; i < 9; ++i) patterns.at(3).at(i) = true;
-        for (int i = 14; i < 17; ++i) patterns.at(4).at(i) = true;
-        for (int i = 0; i < 3; ++i) patterns.at(5).at(i) = true;
-        for (int i = 20; i < 23; ++i) patterns.at(5).at(i) = true;
+        std::fill(patterns[1].begin(), patterns[1].end(), true);
+        for (int i = 0; i < 3; ++i) patterns[2][i] = true;
+        for (int i = 6; i < 9; ++i) patterns[3][i] = true;
+        for (int i = 14; i < 17; ++i) patterns[4][i] = true;
+        for (int i = 0; i < 3; ++i) patterns[5][i] = true;
+        for (int i = 20; i < 23; ++i) patterns[5][i] = true;
 
         bool isFlight = player->m_isShip || player->m_isDart;
         int branchCount = isFlight ? 2 : 6;
 
         std::vector<BranchResult> results(branchCount);
-        for (int i = 0; i < branchCount; ++i) results.at(i) = simulateBranch(player, patterns.at(i));
+        for (int i = 0; i < branchCount; ++i) results[i] = simulateBranch(player, patterns[i]);
 
         if (AutoBot::trajectoryNode) {
             AutoBot::trajectoryNode->clear();
@@ -266,16 +323,15 @@ class $modify(MyPlayLayer, PlayLayer) {
                 };
                 float halfBox = 15.0f * player->getScale();
                 for (int i = 0; i < branchCount; ++i) {
-                    const auto& pts = results.at(i).points;
+                    const auto& pts = results[i].points;
                     if (pts.empty()) continue;
                     CCPoint prev = startPos;
                     for (const auto& pt : pts) {
-                        AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors.at(i));
+                        AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors[i]);
                         prev = pt;
                     }
-                    // Хитбокс игрока в самом конце каждой ЛОП
                     CCPoint endPt = pts.back();
-                    ccColor4F boxCol = results.at(i).survived ? colors.at(i) : ccColor4F{ 1.f, 0.f, 0.f, 0.95f };
+                    ccColor4F boxCol = results[i].survived ? colors[i] : ccColor4F{ 1.f, 0.f, 0.f, 0.95f };
                     AutoBot::trajectoryNode->drawRect(
                         { endPt.x - halfBox, endPt.y - halfBox },
                         { endPt.x + halfBox, endPt.y + halfBox },
@@ -299,24 +355,28 @@ class $modify(MyPlayLayer, PlayLayer) {
                 int chosen = 0, bestScore = -999;
                 for (int idx = 0; idx < branchCount; ++idx) {
                     int penalty = (mask & (1 << idx)) ? 40 : 0;
-                    if (!isFlight && idx != 0 && results.at(0).survivalSteps > 16 && !(mask & 1)) penalty += 50;
-                    int score = results.at(idx).survivalSteps - penalty;
+                    if (!isFlight && idx != 0 && results[0].survivalSteps > 16 && !(mask & 1)) penalty += 50;
+                    int score = results[idx].survivalSteps - penalty;
                     if (score > bestScore) { bestScore = score; chosen = idx; }
                 }
                 if (!AutoBot::checkpoints.empty()) AutoBot::checkpoints.back().activeBranch = chosen;
-                AutoBot::setHold(this, patterns.at(chosen).at(0));
+                AutoBot::setHold(this, patterns[chosen][0]);
             }
         }
 
         if (AutoBot::isPlaying) {
             for (const auto& act : AutoBot::actions) {
-                if (act.frame == AutoBot::currentFrame) this->handleButton(act.hold, 1, true);
+                if (act.frame == AutoBot::currentFrame) {
+                    AutoBot::botInput = true;
+                    this->handleButton(act.hold, 1, true);
+                    AutoBot::botInput = false;
+                }
             }
         }
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* obj) {
-        if (m_fields->isSimulating) { player->m_isDead = true; return; }
+        if (AutoBot::isSimulating) { player->m_isDead = true; return; }
         if (AutoBot::isRecording && !AutoBot::checkpoints.empty()) {
             auto& cp = AutoBot::checkpoints.back();
             if (cp.activeBranch != -1) cp.triedMask |= (1 << cp.activeBranch);
