@@ -15,8 +15,8 @@ struct MacroAction {
 struct BotCheckpoint {
     int frame;
     size_t actionCount;
-    int triedMask;   // Битовая маска уже опробованных веток (1 << branch)
-    int activeBranch;// Какую ветку пробуем сейчас (-1 = авто)
+    int triedMask;
+    int activeBranch;
 };
 
 namespace AutoBot {
@@ -25,7 +25,7 @@ namespace AutoBot {
     bool showTrajectories = true;
 
     int currentFrame = 0;
-    int graceFrames = 0; // Защита от случайного прыжка на старте/чекпоинте
+    int graceFrames = 0;
     bool currentHold = false;
     std::vector<MacroAction> actions;
     std::vector<BotCheckpoint> checkpoints;
@@ -136,7 +136,6 @@ struct BranchResult {
 
 class $modify(MyPlayLayer, PlayLayer) {
     struct Fields {
-        std::vector<GameObject*> nearbyObjects;
         bool isSimulating = false;
     };
 
@@ -149,33 +148,28 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void resetLevel() {
         PlayLayer::resetLevel();
-        AutoBot::currentHold = false;
-        AutoBot::graceFrames = 10; // Запрещаем прыжки в первые 10 кадров после старта/чекпоинта
-        this->handleButton(false, 1, true);
         if (AutoBot::trajectoryNode) AutoBot::trajectoryNode->clear();
 
-        if (AutoBot::isRecording && !AutoBot::checkpoints.empty()) {
-            AutoBot::currentFrame = AutoBot::checkpoints.back().frame;
-            AutoBot::actions.resize(AutoBot::checkpoints.back().actionCount);
+        if (AutoBot::isRecording) {
+            AutoBot::currentHold = false;
+            AutoBot::graceFrames = 10;
+            this->handleButton(false, 1, true);
+            if (!AutoBot::checkpoints.empty()) {
+                AutoBot::currentFrame = AutoBot::checkpoints.back().frame;
+                AutoBot::actions.resize(AutoBot::checkpoints.back().actionCount);
+            } else {
+                AutoBot::currentFrame = 0;
+                AutoBot::actions.clear();
+            }
         } else {
             AutoBot::currentFrame = 0;
-            if (AutoBot::isRecording) { AutoBot::actions.clear(); AutoBot::checkpoints.clear(); }
-        }
-    }
-
-    void collectNearbyObjects(float playerX) {
-        m_fields->nearbyObjects.clear();
-        if (!this->m_objects) return;
-        for (auto obj : CCArrayExt<GameObject*>(this->m_objects)) {
-            if (!obj) continue;
-            float ox = obj->getPositionX();
-            if (ox >= playerX - 30.f && ox <= playerX + 600.f) m_fields->nearbyObjects.push_back(obj);
         }
     }
     BranchResult simulateBranch(PlayerObject* player, const std::vector<bool>& holdPattern) {
         BranchResult res{ true, 0, {} };
 
         CCPoint origPos = player->m_position;
+        CCPoint origLastPos = player->m_lastPosition;
         double origYVel = player->m_yVelocity;
         bool origOnGround = player->m_isOnGround;
         bool origUpsideDown = player->m_isUpsideDown;
@@ -188,7 +182,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         float origRot = player->getRotation();
 
         m_fields->isSimulating = true;
-        bool simHolding = AutoBot::currentHold;
+        bool simHolding = AutoBot::isRecording ? AutoBot::currentHold : false;
         float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
@@ -196,13 +190,13 @@ class $modify(MyPlayLayer, PlayLayer) {
             if (wantHold && !simHolding) { player->pushButton(PlayerButton::Jump); simHolding = true; }
             else if (!wantHold && simHolding) { player->releaseButton(PlayerButton::Jump); simHolding = false; }
 
-            // 4 подшага на кадр (240 TPS): в GD 1 тик 60 FPS = 1.0f, значит 1/240 сек = 0.25f
             for (int sub = 0; sub < 4; ++sub) {
                 float fDt = 0.25f;
+                player->m_lastPosition = player->m_position;
                 player->m_position.x += 5.770002f * mult * fDt;
-                player->setPosition(player->m_position);
-
+                player->updateJump(fDt);
                 player->update(fDt);
+                player->setPosition(player->m_position);
                 this->checkCollisions(player, fDt, false);
                 if (player->m_isDead) break;
             }
@@ -212,13 +206,16 @@ class $modify(MyPlayLayer, PlayLayer) {
             res.survivalSteps++;
         }
 
-        if (simHolding != AutoBot::currentHold) {
+        if (AutoBot::isRecording && simHolding != AutoBot::currentHold) {
             if (AutoBot::currentHold) player->pushButton(PlayerButton::Jump);
             else player->releaseButton(PlayerButton::Jump);
+        } else if (!AutoBot::isRecording && simHolding) {
+            player->releaseButton(PlayerButton::Jump);
         }
 
         player->m_isDead = false;
         player->m_position = origPos;
+        player->m_lastPosition = origLastPos;
         player->setPosition(origPos);
         player->m_yVelocity = origYVel;
         player->m_isOnGround = origOnGround;
@@ -234,7 +231,6 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         return res;
     }
-
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead || m_fields->isSimulating) return;
@@ -242,7 +238,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         AutoBot::currentFrame++;
         auto player = this->m_player1;
         CCPoint startPos = player->getPosition();
-        collectNearbyObjects(startPos.x);
 
         const int steps = 85;
         std::vector<std::vector<bool>> patterns(6, std::vector<bool>(steps, false));
@@ -254,7 +249,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         for (int i = 20; i < 23; ++i) patterns.at(5).at(i) = true;
 
         bool isFlight = player->m_isShip || player->m_isDart;
-        int branchCount = isFlight ? 2 : 6; // Для кораблика и волны только 0 (отпустить) и 1 (зажать)
+        int branchCount = isFlight ? 2 : 6;
 
         std::vector<BranchResult> results(branchCount);
         for (int i = 0; i < branchCount; ++i) results.at(i) = simulateBranch(player, patterns.at(i));
@@ -267,21 +262,23 @@ class $modify(MyPlayLayer, PlayLayer) {
                     { 1.0f, 0.9f, 0.1f, 0.85f }, { 0.1f, 0.9f, 1.0f, 0.85f },
                     { 0.8f, 0.2f, 1.0f, 0.85f }, { 1.0f, 0.5f, 0.0f, 0.85f }
                 };
+                float halfBox = 15.0f * player->getScale();
                 for (int i = 0; i < branchCount; ++i) {
+                    const auto& pts = results.at(i).points;
+                    if (pts.empty()) continue;
                     CCPoint prev = startPos;
-                    for (const auto& pt : results.at(i).points) {
+                    for (const auto& pt : pts) {
                         AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors.at(i));
                         prev = pt;
                     }
-                }
-                // Отрисовка хитбоксов игрока и ближайших объектов при включённом Show path
-                CCRect pRect = player->getObjectRect();
-                AutoBot::trajectoryNode->drawRect(pRect.origin, pRect.origin + pRect.size, {0,0,0,0}, 0.5f, {0.f, 1.f, 0.f, 0.9f});
-                for (GameObject* obj : m_fields->nearbyObjects) {
-                    if (obj->m_objectType == GameObjectType::Decoration) continue;
-                    CCRect r = obj->getObjectRect();
-                    ccColor4F c = (obj->m_objectType == GameObjectType::Hazard) ? ccColor4F{1.f, 0.f, 0.f, 0.7f} : ccColor4F{0.2f, 0.6f, 1.f, 0.5f};
-                    AutoBot::trajectoryNode->drawRect(r.origin, r.origin + r.size, {0,0,0,0}, 0.4f, c);
+                    // Хитбокс игрока в самом конце каждой ЛОП
+                    CCPoint endPt = pts.back();
+                    ccColor4F boxCol = results.at(i).survived ? colors.at(i) : ccColor4F{ 1.f, 0.f, 0.f, 0.95f };
+                    AutoBot::trajectoryNode->drawRect(
+                        { endPt.x - halfBox, endPt.y - halfBox },
+                        { endPt.x + halfBox, endPt.y + halfBox },
+                        { 0, 0, 0, 0 }, 0.5f, boxCol
+                    );
                 }
             }
         }
@@ -299,7 +296,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                 int mask = AutoBot::checkpoints.empty() ? 0 : AutoBot::checkpoints.back().triedMask;
                 int chosen = 0, bestScore = -999;
                 for (int idx = 0; idx < branchCount; ++idx) {
-                    int penalty = (mask & (1 << idx)) ? 40 : 0; // Штрафуем ветку, на которой уже умирали
+                    int penalty = (mask & (1 << idx)) ? 40 : 0;
                     if (!isFlight && idx != 0 && results.at(0).survivalSteps > 16 && !(mask & 1)) penalty += 50;
                     int score = results.at(idx).survivalSteps - penalty;
                     if (score > bestScore) { bestScore = score; chosen = idx; }
@@ -320,7 +317,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (m_fields->isSimulating) { player->m_isDead = true; return; }
         if (AutoBot::isRecording && !AutoBot::checkpoints.empty()) {
             auto& cp = AutoBot::checkpoints.back();
-            if (cp.activeBranch != -1) cp.triedMask |= (1 << cp.activeBranch); // Запоминаем неудачное действие
+            if (cp.activeBranch != -1) cp.triedMask |= (1 << cp.activeBranch);
         }
         PlayLayer::destroyPlayer(player, obj);
     }
