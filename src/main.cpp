@@ -184,6 +184,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         m_fields->isSimulating = true;
         bool simHolding = AutoBot::isRecording ? AutoBot::currentHold : false;
         float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
+        const float subDt = 1.0f / 240.0f;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
             bool wantHold = holdPattern.at(step);
@@ -191,13 +192,13 @@ class $modify(MyPlayLayer, PlayLayer) {
             else if (!wantHold && simHolding) { player->releaseButton(PlayerButton::Jump); simHolding = false; }
 
             for (int sub = 0; sub < 4; ++sub) {
-                float fDt = 0.25f;
                 player->m_lastPosition = player->m_position;
-                player->m_position.x += 5.770002f * mult * fDt;
-                player->updateJump(fDt);
-                player->update(fDt);
+                player->m_position.x += 311.58f * mult * subDt;
+                player->updateJump(subDt);
+                player->update(subDt);
+                player->m_position.y += static_cast<float>(player->m_yVelocity) * subDt;
                 player->setPosition(player->m_position);
-                this->checkCollisions(player, fDt, false);
+                this->checkCollisions(player, subDt, false);
                 if (player->m_isDead) break;
             }
 
@@ -231,6 +232,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         return res;
     }
+
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead || m_fields->isSimulating) return;
