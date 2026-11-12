@@ -4,6 +4,7 @@
 #include <Geode/ui/Popup.hpp>
 #include <vector>
 #include <fstream>
+#include <algorithm>
 
 using namespace geode::prelude;
 
@@ -30,10 +31,12 @@ namespace AutoBot {
     }
 }
 
-// Компактное окно настроек с переключателями ON / OFF
-class AutoBotPopup : public geode::Popup<> {
+// Компактное окно настроек с переключателями ON / OFF (под Geode v6)
+class AutoBotPopup : public geode::Popup {
 protected:
-    bool setup() override {
+    bool init() {
+        if (!Popup::init(280.f, 190.f)) return false;
+
         this->setTitle("AutoBot Control Panel");
 
         auto winSize = m_mainLayer->getContentSize();
@@ -41,7 +44,6 @@ protected:
         menu->setPosition({ 0.f, 0.f });
         m_mainLayer->addChild(menu);
 
-        // Вспомогательная функция для создания строки с переключателем ON/OFF
         auto addToggle = [&](const char* labelText, float yPos, bool initialState, SEL_MenuHandler callback) {
             auto label = CCLabelBMFont::create(labelText, "bigFont.fnt");
             label->setScale(0.45f);
@@ -86,7 +88,7 @@ protected:
 public:
     static AutoBotPopup* create() {
         auto ret = new AutoBotPopup();
-        if (ret && ret->initAnchored(280.f, 190.f)) {
+        if (ret && ret->init()) {
             ret->autorelease();
             return ret;
         }
@@ -137,7 +139,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
     }
 
-    // Симуляция одной ветки действий с учётом пола, потолка, гравитации и гейммода
     void simulateBranch(PlayerObject* player, const std::vector<bool>& holdPattern, ccColor4F color) {
         CCPoint pos = player->getPosition();
         double yVel = player->m_yVelocity;
@@ -145,9 +146,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         float gravDir = upsideDown ? -1.0f : 1.0f;
         float playerHalfHeight = 15.0f * player->getScale();
         float groundY = this->m_groundLayer ? this->m_groundLayer->getPositionY() + playerHalfHeight : playerHalfHeight;
-        float ceilingY = 300.0f; // Базовый потолок для закрытых режимов
-
-        // Скорость по X в зависимости от множителя скорости игрока
+        float ceilingY = 300.0f;
         float speedX = 5.18f * player->m_playerSpeed;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
@@ -158,9 +157,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
             bool onGround = (!upsideDown && pos.y <= groundY + 0.5f) || (upsideDown && pos.y >= ceilingY - 0.5f);
 
-            // Физика в зависимости от текущего режима игры
             if (player->m_isShip || player->m_isBird) {
-                // Кораблик или НЛО
                 if (player->m_isBird) {
                     if (justClicked) yVel = 8.0 * gravDir;
                     yVel -= 0.55 * gravDir;
@@ -169,17 +166,14 @@ class $modify(MyPlayLayer, PlayLayer) {
                     yVel = std::clamp(yVel, -8.5, 8.5);
                 }
             } else if (player->m_isDart) {
-                // Волна (Wave)
                 yVel = (isHolding ? 1.0 : -1.0) * speedX * 1.15f * gravDir;
             } else if (player->m_isBall) {
-                // Шар (Ball)
                 if (justClicked && onGround) {
                     gravDir = -gravDir;
                     yVel = 3.0 * gravDir;
                 }
                 yVel -= 0.75 * gravDir;
             } else {
-                // Куб / Робот / Паук
                 if (onGround) {
                     yVel = 0.0;
                     if (isHolding) {
@@ -193,7 +187,6 @@ class $modify(MyPlayLayer, PlayLayer) {
             pos.x += speedX;
             pos.y += static_cast<float>(yVel) * 0.45f;
 
-            // Учёт пола (чтобы линия не проваливалась сквозь землю)
             if (gravDir > 0 && pos.y < groundY) {
                 pos.y = groundY;
                 if (!player->m_isDart) yVel = 0.0;
@@ -214,20 +207,14 @@ class $modify(MyPlayLayer, PlayLayer) {
             AutoBot::trajectoryNode->clear();
             if (AutoBot::showTrajectories) {
                 const int steps = 45;
-                // 1. Ничего не делать (0 кликов) - Зелёный
                 std::vector<bool> pNone(steps, false);
-                // 2. Зажать и держать (Hold) - Красный
                 std::vector<bool> pHold(steps, true);
-                // 3. 1 клик (нажать на 3 тика и отпустить) - Жёлтый
                 std::vector<bool> pClick1(steps, false);
                 for (int i = 0; i < 3; ++i) pClick1[i] = true;
-                // 4. 2 клика - Голубой
                 std::vector<bool> pClick2 = pClick1;
                 for (int i = 10; i < 13; ++i) pClick2[i] = true;
-                // 5. 3 клика - Фиолетовый
                 std::vector<bool> pClick3 = pClick2;
                 for (int i = 20; i < 23; ++i) pClick3[i] = true;
-                // 6. 4 клика - Оранжевый
                 std::vector<bool> pClick4 = pClick3;
                 for (int i = 30; i < 33; ++i) pClick4[i] = true;
 
