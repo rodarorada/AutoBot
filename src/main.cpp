@@ -254,11 +254,15 @@ class $modify(MyPlayLayer, PlayLayer) {
                 player->m_lastPosition = player->m_position;
                 float gravDir = player->m_isUpsideDown ? -1.0f : 1.0f;
 
+                if (player->m_yVelocity * gravDir > 15.0) {
+                    player->m_isOnGround = false;
+                }
+
                 if (player->m_isDart) {
                     float speedX = 311.58f * mult;
                     player->m_yVelocity = (simHolding ? speedX : -speedX) * gravDir;
                 } else if (player->m_isShip) {
-                    float accel = simHolding ? 1350.0f : -1100.0f;
+                    float accel = simHolding ? 1380.0f : -1120.0f;
                     player->m_yVelocity += accel * gravDir * subDt;
                     player->m_yVelocity = std::clamp(player->m_yVelocity, -550.0, 550.0);
                 } else if (player->m_isBird) {
@@ -271,11 +275,11 @@ class $modify(MyPlayLayer, PlayLayer) {
                             gravDir = player->m_isUpsideDown ? -1.0f : 1.0f;
                             player->m_yVelocity = -200.0 * gravDir;
                         } else {
-                            player->m_yVelocity = 573.0 * gravDir;
+                            player->m_yVelocity = 602.0 * gravDir;
                         }
                         player->m_isOnGround = false;
                     }
-                    player->m_yVelocity -= 2794.0 * gravDir * subDt;
+                    player->m_yVelocity -= 2865.0 * gravDir * subDt;
                     if (gravDir > 0 && player->m_yVelocity < -810.0) player->m_yVelocity = -810.0;
                     if (gravDir < 0 && player->m_yVelocity > 810.0) player->m_yVelocity = 810.0;
                 }
@@ -283,12 +287,13 @@ class $modify(MyPlayLayer, PlayLayer) {
                 player->m_position.x += 311.58f * mult * subDt;
                 player->m_position.y += static_cast<float>(player->m_yVelocity) * subDt;
 
-                if (!player->m_isUpsideDown && player->m_position.y <= 105.0f) {
-                    player->m_position.y = 105.0f;
+                float groundY = 105.0f + 15.0f * player->getScale();
+                if (!player->m_isUpsideDown && player->m_position.y <= groundY) {
+                    player->m_position.y = groundY;
                     player->m_yVelocity = 0.0;
                     player->m_isOnGround = true;
                 }
-                this->checkCollisions(player, subDt, false);
+                this->checkCollisions(player, subDt, true);
                 if (player->m_isDead) break;
             }
 
