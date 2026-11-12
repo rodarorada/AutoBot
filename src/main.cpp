@@ -4,22 +4,13 @@
 #include <vector>
 #include <fstream>
 #include <algorithm>
-#include <cmath>
+#include <map>
 
 using namespace geode::prelude;
 
 struct MacroAction {
     int frame;
     bool hold;
-};
-
-struct BotState {
-    int frame;
-    CCPoint pos;
-    double yVelocity;
-    bool isUpsideDown;
-    size_t actionCount;
-    int triedBranch;
 };
 
 namespace AutoBot {
@@ -30,7 +21,8 @@ namespace AutoBot {
     int currentFrame = 0;
     bool currentHold = false;
     std::vector<MacroAction> actions;
-    std::vector<BotState> checkpoints;
+    // Запоминаем для каждого кадра, сколько раз мы там уже умирали, чтобы менять тайминг
+    std::map<int, int> deathMemory;
     CCDrawNode* trajectoryNode = nullptr;
 
     void setHold(PlayerObject* player, bool hold) {
@@ -104,7 +96,7 @@ protected:
     void onTogglePaths(CCObject* s) { AutoBot::showTrajectories = !static_cast<CCMenuItemToggler*>(s)->isToggled(); }
     void onToggleRecord(CCObject* s) {
         AutoBot::isRecording = !static_cast<CCMenuItemToggler*>(s)->isToggled();
-        if (AutoBot::isRecording) { AutoBot::isPlaying = false; AutoBot::actions.clear(); AutoBot::checkpoints.clear(); }
+        if (AutoBot::isRecording) { AutoBot::isPlaying = false; AutoBot::actions.clear(); AutoBot::deathMemory.clear(); }
     }
     void onTogglePlay(CCObject* s) {
         AutoBot::isPlaying = !static_cast<CCMenuItemToggler*>(s)->isToggled();
@@ -133,24 +125,19 @@ class $modify(MyPauseLayer, PauseLayer) {
     }
     void onOpenAutoBot(CCObject*) { AutoBotPopup::create()->show(); }
 };
-// Вспомогательная структура для быстрого результата симуляции одной ветки
 struct BranchResult {
-    bool survived;          // Выжила ли ветка до конца прогноза
-    int survivalSteps;      // Сколько шагов прожила до смерти
-    float finalX;           // Насколько далеко продвинулась по X
+    bool survived;
+    int survivalSteps;
     std::vector<CCPoint> points;
 };
 
-// Определяем текущий режим игрока в виде числа для симуляции
-enum class SimMode { Cube, Ship, Ball, Ufo, Wave, Robot, Spider };
+enum class SimMode { Cube, Ship, Ball, Ufo, Wave };
 
 SimMode getPlayerMode(PlayerObject* p) {
     if (p->m_isShip) return SimMode::Ship;
     if (p->m_isBall) return SimMode::Ball;
     if (p->m_isBird) return SimMode::Ufo;
     if (p->m_isDart) return SimMode::Wave;
-    if (p->m_isRobot) return SimMode::Robot;
-    if (p->m_isSpider) return SimMode::Spider;
     return SimMode::Cube;
 }
 
@@ -170,35 +157,35 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         AutoBot::currentFrame = 0;
         AutoBot::currentHold = false;
+        if (AutoBot::isRecording) AutoBot::actions.clear();
         if (AutoBot::trajectoryNode) AutoBot::trajectoryNode->clear();
     }
 
-    // Собираем только объекты в зоне видимости пути (оптимизация FPS)
     void collectNearbyObjects(float playerX) {
         m_fields->nearbyObjects.clear();
         if (!this->m_objects) return;
         for (auto obj : CCArrayExt<GameObject*>(this->m_objects)) {
             if (!obj || obj->m_isDecoration) continue;
             float ox = obj->getPositionX();
-            if (ox >= playerX - 40.f && ox <= playerX + 380.f) {
+            if (ox >= playerX - 30.f && ox <= playerX + 600.f) {
                 m_fields->nearbyObjects.push_back(obj);
             }
         }
     }
 
     BranchResult simulateBranch(PlayerObject* player, const std::vector<bool>& holdPattern) {
-        BranchResult res{ true, 0, player->getPositionX(), {} };
+        BranchResult res{ true, 0, {} };
         CCPoint pos = player->getPosition();
         double yVel = player->m_yVelocity;
         bool upsideDown = player->m_isUpsideDown;
         float gravDir = upsideDown ? -1.0f : 1.0f;
         SimMode mode = getPlayerMode(player);
 
-        float scale = player->getScale();
-        float halfSize = 15.0f * scale;
-        float groundY = (this->m_groundLayer ? this->m_groundLayer->getPositionY() : 0.0f) + halfSize;
-        float ceilingY = 285.0f;
+        float halfSize = 15.0f * player->getScale();
+        float groundY = 90.0f + halfSize; // Точная высота пола в GD
+        float ceilingY = 390.0f - halfSize;
         float speedX = 5.18f * player->m_playerSpeed;
+        bool onSurface = player->m_isOnGround;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
             CCPoint prevPos = pos;
@@ -206,9 +193,6 @@ class $modify(MyPlayLayer, PlayLayer) {
             bool prevHolding = (step > 0) ? holdPattern[step - 1] : false;
             bool justClicked = isHolding && !prevHolding;
 
-            bool onGround = (!upsideDown && pos.y <= groundY + 0.5f) || (upsideDown && pos.y >= ceilingY - 0.5f);
-
-            // Физика полёта/прыжка в зависимости от режима
             if (mode == SimMode::Ship) {
                 yVel += (isHolding ? 0.52 : -0.48) * gravDir;
                 yVel = std::clamp(yVel, -8.5, 8.5);
@@ -218,16 +202,17 @@ class $modify(MyPlayLayer, PlayLayer) {
             } else if (mode == SimMode::Wave) {
                 yVel = (isHolding ? 1.0 : -1.0) * speedX * 1.15f * gravDir;
             } else if (mode == SimMode::Ball) {
-                if (justClicked && onGround) {
+                if (justClicked && onSurface) {
                     upsideDown = !upsideDown;
                     gravDir = upsideDown ? -1.0f : 1.0f;
                     yVel = 3.2 * gravDir;
+                    onSurface = false;
                 }
                 yVel -= 0.78 * gravDir;
             } else {
-                if (onGround) {
+                if (onSurface) {
                     yVel = 0.0;
-                    if (isHolding) yVel = 11.15 * gravDir;
+                    if (isHolding) { yVel = 11.15 * gravDir; onSurface = false; }
                 } else {
                     yVel -= 0.86 * gravDir;
                 }
@@ -235,145 +220,99 @@ class $modify(MyPlayLayer, PlayLayer) {
 
             pos.x += speedX;
             pos.y += static_cast<float>(yVel) * 0.45f;
+            onSurface = false;
 
-            if (gravDir > 0 && pos.y < groundY) { pos.y = groundY; if (mode != SimMode::Wave) yVel = 0.0; }
-            if (gravDir < 0 && pos.y > ceilingY) { pos.y = ceilingY; if (mode != SimMode::Wave) yVel = 0.0; }
+            if (gravDir > 0 && pos.y <= groundY) { pos.y = groundY; if (mode != SimMode::Wave) { yVel = 0.0; onSurface = true; } }
+            if (gravDir < 0 && pos.y >= ceilingY) { pos.y = ceilingY; if (mode != SimMode::Wave) { yVel = 0.0; onSurface = true; } }
 
-            // Проверка столкновений с блоками, шипами, падами, орбами и порталами
-            CCRect pBox = { pos.x - halfSize * 0.85f, pos.y - halfSize * 0.85f, halfSize * 1.7f, halfSize * 1.7f };
+            CCRect pBox = { pos.x - halfSize * 0.8f, pos.y - halfSize * 0.8f, halfSize * 1.6f, halfSize * 1.6f };
             for (GameObject* obj : m_fields->nearbyObjects) {
                 CCRect oBox = obj->getObjectRect();
                 if (!pBox.intersectsRect(oBox)) continue;
 
                 auto type = obj->m_objectType;
                 if (type == GameObjectType::Hazard) {
-                    res.survived = false;
-                    res.points.push_back(pos);
-                    return res;
+                    res.survived = false; res.points.push_back(pos); return res;
                 } else if (type == GameObjectType::Solid) {
-                    float topY = oBox.getMaxY() + halfSize;
-                    float botY = oBox.getMinY() - halfSize;
-                    // Если приземляемся сверху (при обычной гравитации) или снизу (при перевёрнутой)
-                    if (gravDir > 0 && prevPos.y >= oBox.getMaxY() + halfSize * 0.4f) {
-                        pos.y = topY;
-                        yVel = 0.0;
-                    } else if (gravDir < 0 && prevPos.y <= oBox.getMinY() - halfSize * 0.4f) {
-                        pos.y = botY;
-                        yVel = 0.0;
+                    if (gravDir > 0 && prevPos.y >= oBox.getMaxY() + halfSize * 0.3f) {
+                        pos.y = oBox.getMaxY() + halfSize; yVel = 0.0; onSurface = true;
+                    } else if (gravDir < 0 && prevPos.y <= oBox.getMinY() - halfSize * 0.3f) {
+                        pos.y = oBox.getMinY() - halfSize; yVel = 0.0; onSurface = true;
                     } else {
-                        // Врезались в стенку блока
-                        res.survived = false;
-                        res.points.push_back(pos);
-                        return res;
+                        res.survived = false; res.points.push_back(pos); return res;
                     }
-                } else if (type == GameObjectType::YellowJumpPad) {
-                    yVel = 15.5 * gravDir;
-                } else if (type == GameObjectType::PinkJumpPad) {
-                    yVel = 11.2 * gravDir;
-                } else if (type == GameObjectType::GravityPad) {
-                    upsideDown = !upsideDown; gravDir = upsideDown ? -1.0f : 1.0f; yVel = 5.0 * gravDir;
-                } else if (justClicked && (type == GameObjectType::YellowJumpRing || type == GameObjectType::PinkJumpRing)) {
-                    yVel = (type == GameObjectType::YellowJumpRing ? 11.2 : 8.5) * gravDir;
-                } else if (type == GameObjectType::InverseGravityPortal) {
-                    upsideDown = true; gravDir = -1.0f;
-                } else if (type == GameObjectType::NormalGravityPortal) {
-                    upsideDown = false; gravDir = 1.0f;
-                } else if (type == GameObjectType::CubePortal) mode = SimMode::Cube;
+                } else if (type == GameObjectType::YellowJumpPad) { yVel = 15.5 * gravDir; onSurface = false; }
+                else if (type == GameObjectType::PinkJumpPad) { yVel = 11.2 * gravDir; onSurface = false; }
+                else if (justClicked && type == GameObjectType::YellowJumpRing) { yVel = 11.2 * gravDir; onSurface = false; }
+                else if (type == GameObjectType::InverseGravityPortal) { upsideDown = true; gravDir = -1.0f; }
+                else if (type == GameObjectType::NormalGravityPortal) { upsideDown = false; gravDir = 1.0f; }
+                else if (type == GameObjectType::CubePortal) mode = SimMode::Cube;
                 else if (type == GameObjectType::ShipPortal) mode = SimMode::Ship;
                 else if (type == GameObjectType::BallPortal) mode = SimMode::Ball;
                 else if (type == GameObjectType::UfoPortal) mode = SimMode::Ufo;
                 else if (type == GameObjectType::WavePortal) mode = SimMode::Wave;
             }
-
             res.survivalSteps++;
-            res.finalX = pos.x;
             res.points.push_back(pos);
         }
         return res;
     }
-    void drawBranchLine(CCPoint startPos, const BranchResult& res, ccColor4F color) {
-        if (!AutoBot::trajectoryNode || res.points.empty()) return;
-        CCPoint prev = startPos;
-        for (const auto& pt : res.points) {
-            AutoBot::trajectoryNode->drawSegment(prev, pt, 1.0f, color);
-            prev = pt;
-        }
-    }
 
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
-        if (!this->m_player1) return;
+        if (!this->m_player1 || this->m_player1->m_isDead) return;
 
         AutoBot::currentFrame++;
         auto player = this->m_player1;
         CCPoint startPos = player->getPosition();
-
-        // Один раз за кадр собираем объекты впереди
         collectNearbyObjects(startPos.x);
 
-        const int steps = 45;
+        const int steps = 85; // Длинное ОП (в 2 раза длиннее)
         std::vector<std::vector<bool>> patterns(6, std::vector<bool>(steps, false));
-        // 0: Ничего не делать
-        // 1: Зажать (Hold)
-        std::fill(patterns[1].begin(), patterns[1].end(), true);
-        // 2: 1 клик
-        for (int i = 0; i < 3; ++i) patterns[2][i] = true;
-        // 3: 2 клика
-        patterns[3] = patterns[2];
-        for (int i = 11; i < 14; ++i) patterns[3][i] = true;
-        // 4: 3 клика
-        patterns[4] = patterns[3];
-        for (int i = 22; i < 25; ++i) patterns[4][i] = true;
-        // 5: 4 клика
-        patterns[5] = patterns[4];
-        for (int i = 33; i < 36; ++i) patterns[5][i] = true;
+        std::fill(patterns.begin(), patterns.end(), true); // 1: Зажать (Hold)
+        for (int i = 0; i < 3; ++i) patterns[i] = true;     // 2: Прыжок сейчас
+        for (int i = 8; i < 11; ++i) patterns[i] = true;    // 3: Поздний прыжок (через 8 тиков)
+        for (int i = 0; i < 3; ++i) patterns[i] = true;     // 4: 2 клика
+        for (int i = 18; i < 21; ++i) patterns[i] = true;
+        patterns = patterns;                                  // 5: 3 клика
+        for (int i = 36; i < 39; ++i) patterns[i] = true;
 
         std::vector<BranchResult> results(6);
-        for (int i = 0; i < 6; ++i) {
-            results[i] = simulateBranch(player, patterns[i]);
-        }
+        for (int i = 0; i < 6; ++i) results[i] = simulateBranch(player, patterns[i]);
 
-        // Отрисовка всех 6 веток по кнопке Show path
         if (AutoBot::trajectoryNode) {
             AutoBot::trajectoryNode->clear();
             if (AutoBot::showTrajectories) {
-                ccColor4F colors[6] = {
-                    { 0.1f, 1.0f, 0.1f, 0.75f }, { 1.0f, 0.1f, 0.1f, 0.75f },
-                    { 1.0f, 0.9f, 0.1f, 0.75f }, { 0.1f, 0.9f, 1.0f, 0.75f },
-                    { 0.8f, 0.2f, 1.0f, 0.75f }, { 1.0f, 0.5f, 0.0f, 0.75f }
+                ccColor4F colors = {
+                    { 0.1f, 1.0f, 0.1f, 0.8f }, { 1.0f, 0.1f, 0.1f, 0.8f },
+                    { 1.0f, 0.9f, 0.1f, 0.8f }, { 0.1f, 0.9f, 1.0f, 0.8f },
+                    { 0.8f, 0.2f, 1.0f, 0.8f }, { 1.0f, 0.5f, 0.0f, 0.8f }
                 };
-                for (int i = 0; i < 6; ++i) drawBranchLine(startPos, results[i], colors[i]);
-            }
-        }
-
-        // Умный Path Finder (выбор безопасной ветки + сохранение чекпоинтов)
-        if (AutoBot::isRecording) {
-            int skipBranch = AutoBot::checkpoints.empty() ? -1 : AutoBot::checkpoints.back().triedBranch;
-            int chosen = -1;
-
-            // Ищем первую выжившую ветку (учитывая запрещённые после отката)
-            for (int i = 0; i < 6; ++i) {
-                if (i <= skipBranch) continue;
-                if (results[i].survived) { chosen = i; break; }
-            }
-            // Если все выживают не до конца, берём ту, что пролетела дальше всех
-            if (chosen == -1) {
-                int bestSteps = -1;
                 for (int i = 0; i < 6; ++i) {
-                    if (i <= skipBranch) continue;
-                    if (results[i].survivalSteps > bestSteps) { bestSteps = results[i].survivalSteps; chosen = i; }
-                }
-            }
-
-            if (chosen != -1) {
-                AutoBot::setHold(player, patterns[chosen][0]);
-                if (AutoBot::currentFrame % 25 == 0 && results[0].survived) {
-                    AutoBot::checkpoints.push_back({ AutoBot::currentFrame, startPos, player->m_yVelocity, player->m_isUpsideDown, AutoBot::actions.size(), -1 });
+                    CCPoint prev = startPos;
+                    for (const auto& pt : results[i].points) {
+                        AutoBot::trajectoryNode->drawSegment(prev, pt, 0.45f, colors[i]); // Тонкие ЛОП как в MegaHack
+                        prev = pt;
+                    }
                 }
             }
         }
 
-        // Воспроизведение готового макроса (Showcase)
+        if (AutoBot::isRecording) {
+            // Строго не прыгаем, если путь без нажатия (ветка 0) полностью чист
+            if (results.survived && AutoBot::deathMemory[AutoBot::currentFrame] == 0) {
+                AutoBot::setHold(player, false);
+            } else {
+                int bestBranch = 0, bestScore = -1;
+                for (int i = 0; i < 6; ++i) {
+                    int penalty = (i == 2 && AutoBot::deathMemory[AutoBot::currentFrame] > 0) ? 30 : 0;
+                    int score = results[i].survivalSteps - penalty;
+                    if (score > bestScore) { bestScore = score; bestBranch = i; }
+                }
+                AutoBot::setHold(player, patterns[bestBranch]);
+            }
+        }
+
         if (AutoBot::isPlaying) {
             for (const auto& act : AutoBot::actions) {
                 if (act.frame == AutoBot::currentFrame) {
@@ -384,22 +323,10 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
     }
 
-    // Перехват смерти для отката назад (Backtracking)
     void destroyPlayer(PlayerObject* player, GameObject* obj) {
-        if (AutoBot::isRecording && !AutoBot::checkpoints.empty()) {
-            auto& cp = AutoBot::checkpoints.back();
-            cp.triedBranch++;
-            if (cp.triedBranch >= 5 && AutoBot::checkpoints.size() > 1) {
-                AutoBot::checkpoints.pop_back(); // Откатываемся ещё глубже назад
-                AutoBot::checkpoints.back().triedBranch++;
-            }
-            auto& activeCp = AutoBot::checkpoints.back();
-            AutoBot::currentFrame = activeCp.frame;
-            AutoBot::actions.resize(activeCp.actionCount);
-            player->setPosition(activeCp.pos);
-            player->m_yVelocity = activeCp.yVelocity;
-            player->m_isUpsideDown = activeCp.isUpsideDown;
-            return; // Отменяем смерть!
+        if (AutoBot::isRecording && !AutoBot::actions.empty()) {
+            // Запоминаем кадр последнего прыжка перед смертью, чтобы в следующей попытке прыгнуть в другой тайминг
+            AutoBot::deathMemory[AutoBot::actions.back().frame]++;
         }
         PlayLayer::destroyPlayer(player, obj);
     }
