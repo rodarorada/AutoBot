@@ -14,15 +14,8 @@ struct MacroAction {
 
 struct BotCheckpoint {
     int frame;
-    CCPoint pos;
-    double yVelocity;
-    bool isUpsideDown;
-    bool isShip;
-    bool isBall;
-    bool isBird;
-    bool isDart;
     size_t actionCount;
-    int forcedBranch; // Какую ветку пробовать после отката (-1 = авто)
+    int forcedBranch;
 };
 
 namespace AutoBot {
@@ -36,12 +29,12 @@ namespace AutoBot {
     std::vector<BotCheckpoint> checkpoints;
     CCDrawNode* trajectoryNode = nullptr;
 
-    void setHold(PlayerObject* player, bool hold) {
+    void setHold(GJBaseGameLayer* layer, bool hold) {
         if (currentHold != hold) {
             currentHold = hold;
             actions.push_back({ currentFrame, hold });
-            if (hold) player->pushButton(PlayerButton::Jump);
-            else player->releaseButton(PlayerButton::Jump);
+            if (hold) layer->pushButton(1, true);
+            else layer->releaseButton(1, true);
         }
     }
 
@@ -102,7 +95,6 @@ protected:
         this->setKeypadEnabled(true);
         return true;
     }
-
     void onClose(CCObject*) { this->keyBackClicked(); }
     void onTogglePaths(CCObject* s) { AutoBot::showTrajectories = !static_cast<CCMenuItemToggler*>(s)->isToggled(); }
     void onToggleRecord(CCObject* s) {
@@ -156,7 +148,6 @@ SimMode getPlayerMode(PlayerObject* p) {
 class $modify(MyPlayLayer, PlayLayer) {
     struct Fields {
         std::vector<GameObject*> nearbyObjects;
-        int rollbackCooldown = 0;
     };
 
     bool init(GJGameLevel* level, bool dontCreateObjects) {
@@ -168,10 +159,16 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void resetLevel() {
         PlayLayer::resetLevel();
-        AutoBot::currentFrame = 0;
         AutoBot::currentHold = false;
-        if (AutoBot::isRecording) { AutoBot::actions.clear(); AutoBot::checkpoints.clear(); }
         if (AutoBot::trajectoryNode) AutoBot::trajectoryNode->clear();
+
+        if (AutoBot::isRecording && !AutoBot::checkpoints.empty()) {
+            AutoBot::currentFrame = AutoBot::checkpoints.back().frame;
+            AutoBot::actions.resize(AutoBot::checkpoints.back().actionCount);
+        } else {
+            AutoBot::currentFrame = 0;
+            if (AutoBot::isRecording) { AutoBot::actions.clear(); AutoBot::checkpoints.clear(); }
+        }
     }
 
     void collectNearbyObjects(float playerX) {
@@ -180,12 +177,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         for (auto obj : CCArrayExt<GameObject*>(this->m_objects)) {
             if (!obj) continue;
             float ox = obj->getPositionX();
-            if (ox >= playerX - 30.f && ox <= playerX + 600.f) {
-                m_fields->nearbyObjects.push_back(obj);
-            }
+            if (ox >= playerX - 30.f && ox <= playerX + 600.f) m_fields->nearbyObjects.push_back(obj);
         }
     }
-
     BranchResult simulateBranch(PlayerObject* player, const std::vector<bool>& holdPattern) {
         BranchResult res{ true, 0, {} };
         CCPoint pos = player->getPosition();
@@ -197,7 +191,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         float halfSize = 15.0f * player->getScale();
         float groundY = 90.0f + halfSize;
         float ceilingY = 390.0f - halfSize;
-        float speedX = 5.18f * player->m_playerSpeed;
+        float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
+        float speedX = 5.18f * mult;
         bool onSurface = player->m_isOnGround;
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
@@ -227,6 +222,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                     yVel -= 0.86 * gravDir;
                 }
             }
+
             pos.x += speedX;
             pos.y += static_cast<float>(yVel) * 0.45f;
             onSurface = false;
@@ -272,11 +268,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
         return res;
     }
-
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead) return;
-        if (m_fields->rollbackCooldown > 0) m_fields->rollbackCooldown--;
 
         AutoBot::currentFrame++;
         auto player = this->m_player1;
@@ -313,15 +307,22 @@ class $modify(MyPlayLayer, PlayLayer) {
                 }
             }
         }
+
         if (AutoBot::isRecording) {
+            if (!this->m_isPracticeMode) this->togglePracticeMode(true);
+            unsigned int cpCount = this->m_checkpoints ? this->m_checkpoints->count() : 0;
+            while (AutoBot::checkpoints.size() < cpCount) {
+                AutoBot::checkpoints.push_back({ AutoBot::currentFrame, AutoBot::actions.size(), -1 });
+            }
+            while (AutoBot::checkpoints.size() > cpCount && !AutoBot::checkpoints.empty()) {
+                AutoBot::checkpoints.pop_back();
+            }
+
             bool isFlight = player->m_isShip || player->m_isDart;
             int chosen = 0;
-
             if (!AutoBot::checkpoints.empty() && AutoBot::checkpoints.back().forcedBranch != -1) {
                 chosen = AutoBot::checkpoints.back().forcedBranch;
-                if (AutoBot::currentFrame - AutoBot::checkpoints.back().frame > 10) {
-                    AutoBot::checkpoints.back().forcedBranch = -1;
-                }
+                if (AutoBot::currentFrame - AutoBot::checkpoints.back().frame > 12) AutoBot::checkpoints.back().forcedBranch = -1;
             } else if (!isFlight && results.at(0).survivalSteps > 16) {
                 chosen = 0;
             } else {
@@ -332,50 +333,24 @@ class $modify(MyPlayLayer, PlayLayer) {
                     if (results.at(idx).survivalSteps > bestSteps) { bestSteps = results.at(idx).survivalSteps; chosen = idx; }
                 }
             }
-
-            bool wantHold = patterns.at(chosen).at(0);
-            if ((wantHold && !AutoBot::currentHold) || AutoBot::currentFrame % 240 == 0 || AutoBot::checkpoints.empty()) {
-                AutoBot::checkpoints.push_back({
-                    AutoBot::currentFrame, startPos, player->m_yVelocity, player->m_isUpsideDown,
-                    player->m_isShip, player->m_isBall, player->m_isBird, player->m_isDart,
-                    AutoBot::actions.size(), -1
-                });
-            }
-            AutoBot::setHold(player, wantHold);
+            AutoBot::setHold(this, patterns.at(chosen).at(0));
         }
 
         if (AutoBot::isPlaying) {
             for (const auto& act : AutoBot::actions) {
                 if (act.frame == AutoBot::currentFrame) {
-                    if (act.hold) player->pushButton(PlayerButton::Jump);
-                    else player->releaseButton(PlayerButton::Jump);
+                    if (act.hold) this->pushButton(1, true);
+                    else this->releaseButton(1, true);
                 }
             }
         }
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* obj) {
-        if (AutoBot::isRecording && !AutoBot::checkpoints.empty() && m_fields->rollbackCooldown == 0) {
+        if (AutoBot::isRecording && !AutoBot::checkpoints.empty()) {
             auto& cp = AutoBot::checkpoints.back();
             cp.forcedBranch = (cp.forcedBranch == -1) ? 2 : (cp.forcedBranch + 1);
-            if (cp.forcedBranch > 5 && AutoBot::checkpoints.size() > 1) {
-                AutoBot::checkpoints.pop_back();
-                AutoBot::checkpoints.back().forcedBranch = 2;
-            }
-            auto& active = AutoBot::checkpoints.back();
-            AutoBot::currentFrame = active.frame;
-            AutoBot::actions.resize(active.actionCount);
-            AutoBot::currentHold = false;
-            player->m_isDead = false;
-            player->setPosition(active.pos);
-            player->m_yVelocity = active.yVelocity;
-            player->m_isUpsideDown = active.isUpsideDown;
-            player->m_isShip = active.isShip;
-            player->m_isBall = active.isBall;
-            player->m_isBird = active.isBird;
-            player->m_isDart = active.isDart;
-            m_fields->rollbackCooldown = 5;
-            return;
+            if (cp.forcedBranch > 5) cp.forcedBranch = 0;
         }
         PlayLayer::destroyPlayer(player, obj);
     }
