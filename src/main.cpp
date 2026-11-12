@@ -175,7 +175,7 @@ class $modify(MyPlayLayer, PlayLayer) {
     BranchResult simulateBranch(PlayerObject* player, const std::vector<bool>& holdPattern) {
         BranchResult res{ true, 0, {} };
 
-        CCPoint origPos = player->getPosition();
+        CCPoint origPos = player->m_position;
         double origYVel = player->m_yVelocity;
         bool origOnGround = player->m_isOnGround;
         bool origUpsideDown = player->m_isUpsideDown;
@@ -189,28 +189,25 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         m_fields->isSimulating = true;
         bool simHolding = AutoBot::currentHold;
-        const float stepDt = 1.0f / 60.0f;
         float mult = (player->m_playerSpeed > 0.1f) ? player->m_playerSpeed : 1.0f;
-        float moveSpeedX = 311.58f * mult; // Точная скорость GD в пикселях в секунду
 
         for (size_t step = 0; step < holdPattern.size(); ++step) {
             bool wantHold = holdPattern.at(step);
             if (wantHold && !simHolding) { player->pushButton(PlayerButton::Jump); simHolding = true; }
             else if (!wantHold && simHolding) { player->releaseButton(PlayerButton::Jump); simHolding = false; }
 
+            // 4 подшага на кадр (240 TPS): в GD 1 тик 60 FPS = 1.0f, значит 1/240 сек = 0.25f
             for (int sub = 0; sub < 4; ++sub) {
-                float subDt = stepDt / 4.0f;
-                CCPoint p = player->getPosition();
-                p.x += moveSpeedX * subDt;
-                player->setPosition(p);
+                float fDt = 0.25f;
+                player->m_position.x += 5.770002f * mult * fDt;
+                player->setPosition(player->m_position);
 
-                player->update(subDt);
-                this->checkCollisions(player, subDt, false);
+                player->update(fDt);
+                this->checkCollisions(player, fDt, false);
                 if (player->m_isDead) break;
             }
 
-            CCPoint curPos = player->getPosition();
-            res.points.push_back(curPos);
+            res.points.push_back(player->m_position);
             if (player->m_isDead) { res.survived = false; break; }
             res.survivalSteps++;
         }
@@ -221,6 +218,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         player->m_isDead = false;
+        player->m_position = origPos;
         player->setPosition(origPos);
         player->m_yVelocity = origYVel;
         player->m_isOnGround = origOnGround;
