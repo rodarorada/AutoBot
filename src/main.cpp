@@ -569,7 +569,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             else if (currentOrb && currentOrb != ag->lastClickedOrb) {
                 bool orbDeadly = false;
                 if (!ag->checkpoints.empty()) {
-                    for (auto& op : ag->checkpoints.back().deadlyOrbs) if (op.distance(currentOrb->getPosition()) < 15.f) orbDeadly = true;
+                    for (auto& op : ag->checkpoints.back().deadlyOrbs) if (op.getDistance(currentOrb->getPosition()) < 15.f) orbDeadly = true;
                 }
                 if (!orbDeadly) {
                     ag->lastClickedOrb = currentOrb; ag->singleClickTimer = 2; wantHold = true;
