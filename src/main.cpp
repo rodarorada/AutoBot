@@ -527,4 +527,3 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
     }
 };
-};
