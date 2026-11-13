@@ -47,6 +47,8 @@ struct QuantumAgent {
     CCPoint savedPos;
     double savedYVel;
     bool savedUpsideDown;
+    float knownFloorY;
+    float knownCeilingY;
     std::vector<MacroAction> actions;
     std::vector<BotCheckpoint> checkpoints;
     std::vector<float> blacklistedCheckpointX;
@@ -267,18 +269,54 @@ class $modify(MyPlayLayer, PlayLayer) {
                t == GameObjectType::GravityDashRing || id == 1330 || id == 1704 || id == 1751 || id == 3004;
     }
 
+    // Вычисляем реальный пол и потолок по позиции портала или земли (в GD базовый пол = 90.0f)
+    void detectLevelBounds(CCPoint curPos, float halfH, bool isOnGround, bool upside, bool hasCeiling, float& outFloor, float& outCeil) {
+        float baseFloor = 90.0f;
+        if (this->m_groundLayer) baseFloor = this->m_groundLayer->getPositionY() + 90.0f;
+        outFloor = baseFloor;
+        outCeil = baseFloor + 300.0f;
+
+        if (!hasCeiling) {
+            if (isOnGround && !upside && curPos.y - halfH < baseFloor + 5.0f) {
+                outFloor = curPos.y - halfH;
+            }
+            return;
+        }
+
+        // Ищем последний пройденный портал режима (корабль, шар, НЛО, волна, паук, свинг)
+        GameObject* bestPortal = nullptr;
+        float bestDist = 999999.f;
+        if (this->m_objects) {
+            for (auto* obj : CCArrayExt<GameObject*>(this->m_objects)) {
+                if (!obj) continue;
+                int id = obj->m_objectID;
+                bool isModePortal = (id == 13 || id == 47 || id == 111 || id == 660 || id == 745 || id == 1331 || id == 1933);
+                if (isModePortal && obj->getPositionX() <= curPos.x + 20.f) {
+                    float d = curPos.x - obj->getPositionX();
+                    if (d < bestDist) { bestDist = d; bestPortal = obj; }
+                }
+            }
+        }
+
+        if (bestPortal) {
+            // В GD границы портала выровнены по сетке 30px вокруг центра портала (высота камеры = 300px)
+            float py = bestPortal->getPositionY();
+            float snappedCenter = std::round(py / 30.0f) * 30.0f;
+            outFloor = std::max(baseFloor, snappedCenter - 150.0f);
+            outCeil = outFloor + 300.0f;
+        }
+    }
+
     bool applyOrbPhysics(double& yVel, bool& upside, float& gravDir, bool& isDashing, GameObject* obj) {
         auto t = obj->getType(); int id = obj->m_objectID;
         if (t == GameObjectType::YellowJumpRing) { yVel = 602.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::PinkJumpRing) { yVel = 435.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::RedJumpRing) { yVel = 830.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::GravityRing) {
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f;
-            yVel = -220.0 * gravDir; isDashing = false; return true;
+            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -220.0 * gravDir; isDashing = false; return true;
         }
         if (t == GameObjectType::GreenRing) {
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f;
-            yVel = 580.0 * gravDir; isDashing = false; return true;
+            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = 580.0 * gravDir; isDashing = false; return true;
         }
         if (id == 1330) { yVel = -950.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::DashRing || id == 1704) { yVel = 0.0; isDashing = true; return true; }
@@ -293,23 +331,18 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     bool applyPassiveObject(double& yVel, bool& upside, float& gravDir, float& speedMult, bool& isDashing, bool& onGround, GameObject* obj) {
         auto t = obj->getType(); int id = obj->m_objectID;
-        // Пады (батуты)
         if (t == GameObjectType::YellowJumpPad || id == 35) { yVel = 860.0 * gravDir; onGround = false; isDashing = false; return true; }
         if (t == GameObjectType::PinkJumpPad || id == 140) { yVel = 610.0 * gravDir; onGround = false; isDashing = false; return true; }
         if (t == GameObjectType::RedJumpPad || id == 1332) { yVel = 1150.0 * gravDir; onGround = false; isDashing = false; return true; }
         if (t == GameObjectType::GravityPad || id == 67) {
             upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -300.0 * gravDir; onGround = false; isDashing = false; return true;
         }
-        if (id == 3005) { // Spider Pad
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -1600.0 * gravDir; onGround = false; isDashing = false; return true;
-        }
-        // Порталы скорости
-        if (id == 200) { speedMult = 0.807f; return true; } // 0.5x
-        if (id == 201) { speedMult = 1.0f; return true; }   // 1x
-        if (id == 202) { speedMult = 1.243f; return true; } // 2x
-        if (id == 203) { speedMult = 1.502f; return true; } // 3x
-        if (id == 1334) { speedMult = 1.848f; return true; } // 4x
-        // S-блок (1817) — прерывает Dash-орб
+        if (id == 3005) { upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -1600.0 * gravDir; onGround = false; isDashing = false; return true; }
+        if (id == 200) { speedMult = 0.807f; return true; }
+        if (id == 201) { speedMult = 1.0f; return true; }
+        if (id == 202) { speedMult = 1.243f; return true; }
+        if (id == 203) { speedMult = 1.502f; return true; }
+        if (id == 1334) { speedMult = 1.848f; return true; }
         if (id == 1817) { isDashing = false; return true; }
         return false;
     }
@@ -332,6 +365,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool isDart = realPlayer->m_isDart, isRobot = realPlayer->m_isRobot, isSpider = realPlayer->m_isSpider;
         bool isSwing = realPlayer->m_isSwing;
         bool hasCeiling = isShip || isBall || isBird || isDart || isSpider || isSwing;
+
+        float floorY = 90.0f, ceilY = 390.0f;
+        detectLevelBounds(startPos, halfH, startGrounded, startUpside, hasCeiling, floorY, ceilY);
 
         int survived = 0; bool jumpedOnce = false;
         GameObject* lastUsedObj = nullptr;
@@ -375,15 +411,15 @@ class $modify(MyPlayLayer, PlayLayer) {
                 pos.y += static_cast<float>(yVel) * subDt;
                 onGround = false;
 
-                // Пол уровня (y = 0)
-                if (pos.y - halfH <= 0.0f) {
-                    pos.y = halfH;
+                // Реальный пол уровня / портала
+                if (pos.y - halfH <= floorY) {
+                    pos.y = floorY + halfH;
                     if (yVel < 0) yVel = 0;
                     if (!upside) onGround = true;
                 }
-                // Потолок в режимах транспорта (y ~ 300)
-                if (hasCeiling && pos.y + halfH >= 300.0f) {
-                    pos.y = 300.0f - halfH;
+                // Реальный потолок портала
+                if (hasCeiling && pos.y + halfH >= ceilY) {
+                    pos.y = ceilY - halfH;
                     if (yVel > 0) yVel = 0;
                     if (upside) onGround = true;
                 }
@@ -418,9 +454,9 @@ class $modify(MyPlayLayer, PlayLayer) {
                         if (t == GameObjectType::Solid && pRect.intersectsRect(oRect)) {
                             float prevBottom = prevPos.y - halfH, prevTop = prevPos.y + halfH;
                             float objTop = oRect.getMaxY(), objBottom = oRect.getMinY();
-                            if (prevBottom >= objTop - 5.0f && yVel <= 0) {
+                            if (prevBottom >= objTop - 8.0f && yVel <= 0) {
                                 pos.y = objTop + halfH; yVel = 0; if (!upside) onGround = true;
-                            } else if (prevTop <= objBottom + 5.0f && yVel >= 0) {
+                            } else if (prevTop <= objBottom + 8.0f && yVel >= 0) {
                                 if (isShip || isBird || isBall || isSpider || isSwing || hasHBlock || (isDart && hasDBlock)) {
                                     pos.y = objBottom - halfH; yVel = 0; if (upside) onGround = true;
                                 } else { died = true; break; }
@@ -448,7 +484,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
         if (!this->m_player1) return;
-        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
+        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, 90.f, 390.f, {}, {}, {}, {}, {}, {}, {} });
         if (auto* ag = AutoBot::getActiveAgent()) {
             ag->singleClickTimer = 0; ag->humanDelayCounter = 0; ag->lastClickedOrb = nullptr; ag->orbChain.clear();
             if (AutoBot::isRecording && !ag->checkpoints.empty()) {
@@ -480,7 +516,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
         if (!AutoBot::showTrajectories && !AutoBot::isRecording) return;
-        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
+        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, 90.f, 390.f, {}, {}, {}, {}, {}, {}, {} });
 
         auto* ag = AutoBot::getActiveAgent();
         auto p = this->m_player1; CCPoint curPos = p->getPosition();
@@ -550,11 +586,14 @@ class $modify(MyPlayLayer, PlayLayer) {
             } else if (!forbidden && canActNow && (p->m_isOnGround || isHoldOnlyMode || isClickOnlyMode)) {
                 bool safeOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty();
                 bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock;
+                // Прыгаем ТОЛЬКО если текущий путь (idle) ведёт к смерти И прыжок реально спасает (живёт дольше)
                 if (diedIdle) {
-                    if (safeOne) {
+                    if (safeOne || (!isHoldOnlyMode && sOne > sIdle + 4)) {
                         if (AutoBot::humanizeClicks && ag->humanDelayCounter < 2 && p->m_isOnGround) ag->humanDelayCounter++;
                         else { ag->humanDelayCounter = 0; ag->singleClickTimer = 1; wantHold = true; }
-                    } else if (safeHold && sHold > sIdle + 8) wantHold = true;
+                    } else if (safeHold && sHold > sIdle + 8) {
+                        wantHold = true;
+                    }
                 } else if (AutoBot::collectCoins && !coinIdle && ((coinOne && safeOne) || (coinHold && safeHold))) {
                     if (coinOne && safeOne) { ag->singleClickTimer = 1; wantHold = true; } else if (holdAllowed) wantHold = true;
                 } else ag->humanDelayCounter = 0;
