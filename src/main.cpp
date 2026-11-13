@@ -35,9 +35,9 @@ struct QuantumAgent {
     bool savedUpsideDown;
     std::vector<MacroAction> actions;
     std::vector<BotCheckpoint> checkpoints;
+    std::vector<CCPoint> lockedJumpArc; // Зафиксированная в пространстве дуга текущего прыжка
     std::vector<CCPoint> idlePath;
     std::vector<CCPoint> holdPath;
-    float deathX;
 };
 
 namespace AutoBot {
@@ -50,7 +50,7 @@ namespace AutoBot {
     bool isWaitingForKey = false;
     bool switchRequested = false;
 
-    int scanStep = 5;
+    int scanStep = 4;
     int maxAgents = 4;
     int scoutFrames = 0;
     enumKeyCodes switchKey = KEY_Tab;
@@ -213,7 +213,7 @@ protected:
             AutoBot::agents.clear();
             AutoBot::nextAgentId = 1;
             AutoBot::isScouting = true;
-            AutoBot::scoutFrames = 75;
+            AutoBot::scoutFrames = 60;
         }
     }
 
@@ -353,7 +353,13 @@ class $modify(MyPlayLayer, PlayLayer) {
                     nop->m_yVelocity -= 1950.0 * gravDir * subDt;
                 } else {
                     if (hold && nop->m_isOnGround) {
-                        nop->m_yVelocity = 602.0 * gravDir;
+                        if (nop->m_isBall || nop->m_isSpider) {
+                            nop->m_isUpsideDown = !nop->m_isUpsideDown;
+                            gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
+                            nop->m_yVelocity = (nop->m_isSpider ? -1200.0 : -200.0) * gravDir;
+                        } else {
+                            nop->m_yVelocity = (nop->m_isRobot ? 640.0 : 602.0) * gravDir;
+                        }
                         nop->m_isOnGround = false;
                     }
                     nop->m_yVelocity -= 2865.0 * gravDir * subDt;
@@ -368,10 +374,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                 if (nop->m_isDead) break;
             }
             pts.push_back(nop->getPosition());
-            if (nop->m_isDead) {
-                outDeathX = nop->getPosition().x;
-                break;
-            }
+            if (nop->m_isDead) { outDeathX = nop->getPosition().x; break; }
             survived++;
         }
 
@@ -406,7 +409,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (!PlayLayer::init(level, dontCreateObjects)) return false;
         m_fields->trajectoryNode = CCDrawNode::create();
         this->m_objectLayer->addChild(m_fields->trajectoryNode, 1000);
-
         m_fields->nopIdle = PlayerObject::create(1, 1, this, this->m_objectLayer, true);
         m_fields->nopHold = PlayerObject::create(1, 1, this, this->m_objectLayer, true);
         if (m_fields->nopIdle) { m_fields->nopIdle->setVisible(false); this->m_objectLayer->addChild(m_fields->nopIdle); }
@@ -420,10 +422,13 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (!this->m_player1) return;
 
         if (AutoBot::agents.empty()) {
-            AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, -1.f });
+            AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {} });
             AutoBot::activeAgentIndex = 0;
         }
         if (auto* ag = AutoBot::getActiveAgent()) {
+            ag->lockedJumpArc.clear();
+            ag->idlePath.clear();
+            ag->holdPath.clear();
             if (AutoBot::isRecording && !ag->checkpoints.empty()) {
                 auto& cp = ag->checkpoints.back();
                 ag->currentFrame = cp.frame;
@@ -443,7 +448,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             CCPoint holdPos = this->m_player1->m_position;
             if (auto* ag = AutoBot::getActiveAgent()) {
                 float d1 = -1.f, d2 = -1.f;
-                int stepLen = std::min(90, 91 - AutoBot::scoutFrames);
+                int stepLen = std::min(90, 61 - AutoBot::scoutFrames + 30);
                 runNOP(m_fields->nopIdle, holdPos, 0.0, this->m_player1->m_isUpsideDown, false, stepLen, ag->idlePath, d1);
                 runNOP(m_fields->nopHold, holdPos, 0.0, this->m_player1->m_isUpsideDown, true, stepLen, ag->holdPath, d2);
             }
@@ -451,10 +456,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             this->m_player1->setPosition(holdPos);
             this->m_player1->m_yVelocity = 0.0;
             AutoBot::scoutFrames--;
-            if (AutoBot::scoutFrames <= 0) {
-                AutoBot::isScouting = false;
-                FMODAudioEngine::sharedEngine()->pauseAllMusic(false);
-            }
+            if (AutoBot::scoutFrames <= 0) { AutoBot::isScouting = false; FMODAudioEngine::sharedEngine()->pauseAllMusic(false); }
             return;
         }
         PlayLayer::update(dt);
@@ -476,46 +478,47 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         if (AutoBot::agents.empty()) {
-            AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, -1.f });
+            AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {} });
         }
 
         auto* ag = AutoBot::getActiveAgent();
-        CCPoint curPos = this->m_player1->getPosition();
-        double curYVel = this->m_player1->m_yVelocity;
-        bool curUp = this->m_player1->m_isUpsideDown;
+        auto p = this->m_player1;
+        CCPoint curPos = p->getPosition();
+        bool isGroundedMode = !p->m_isShip && !p->m_isDart && !p->m_isBird;
 
         if (ag && !AutoBot::isScouting) {
             ag->currentFrame++;
             ag->savedPos = curPos;
-            ag->savedYVel = curYVel;
-            ag->savedUpsideDown = curUp;
+            ag->savedYVel = p->m_yVelocity;
+            ag->savedUpsideDown = p->m_isUpsideDown;
 
-            bool shouldScan = (ag->currentFrame % AutoBot::scanStep == 0) || ag->idlePath.empty();
-            if (!ag->checkpoints.empty() && ag->checkpoints.back().inFineZoom) shouldScan = true;
-
-            if (shouldScan) {
-                float dIdle = -1.f, dHold = -1.f;
-                int sIdle = runNOP(m_fields->nopIdle, curPos, curYVel, curUp, false, 90, ag->idlePath, dIdle);
-                int sHold = runNOP(m_fields->nopHold, curPos, curYVel, curUp, true, 90, ag->holdPath, dHold);
-                ag->deathX = dIdle;
-
-                if (sIdle >= 85 && !ag->checkpoints.empty()) {
-                    ag->checkpoints.back().lastAliveFakeFrame = ag->currentFrame;
-                    ag->checkpoints.back().inFineZoom = false;
-                } else if (dIdle > 0.f && !ag->checkpoints.empty()) {
-                    ag->checkpoints.back().deathFakeFrame = ag->currentFrame;
+            // Если игрок в воздухе в прыжковом режиме — фиксируем дугу и "съедаем" пройденные точки
+            if (isGroundedMode && !p->m_isOnGround) {
+                if (ag->lockedJumpArc.empty()) {
+                    float dTmp = -1.f;
+                    runNOP(m_fields->nopIdle, curPos, p->m_yVelocity, p->m_isUpsideDown, false, 90, ag->lockedJumpArc, dTmp);
                 }
+                while (!ag->lockedJumpArc.empty() && ag->lockedJumpArc.front().x <= curPos.x + 1.0f) {
+                    ag->lockedJumpArc.erase(ag->lockedJumpArc.begin());
+                }
+                ag->idlePath = ag->lockedJumpArc;
+                if (!ag->lockedJumpArc.empty()) {
+                    float dHold = -1.f;
+                    runNOP(m_fields->nopHold, ag->lockedJumpArc.back(), 0.0, p->m_isUpsideDown, true, 55, ag->holdPath, dHold);
+                }
+            } else {
+                ag->lockedJumpArc.clear();
+                float dIdle = -1.f, dHold = -1.f;
+                int sIdle = runNOP(m_fields->nopIdle, curPos, p->m_yVelocity, p->m_isUpsideDown, false, 90, ag->idlePath, dIdle);
+                int sHold = runNOP(m_fields->nopHold, curPos, p->m_yVelocity, p->m_isUpsideDown, true, 90, ag->holdPath, dHold);
 
                 if (sHold > 35 && !ag->holdPath.empty()) {
-                    trySpawnQuantumBranch(*ag, ag->holdPath[std::min<size_t>(12, ag->holdPath.size() - 1)], curYVel);
+                    trySpawnQuantumBranch(*ag, ag->holdPath[std::min<size_t>(12, ag->holdPath.size() - 1)], p->m_yVelocity);
                 }
 
                 if (AutoBot::isRecording) {
                     if (!this->m_isPracticeMode) this->togglePracticeMode(true);
                     bool wantHold = (sHold > sIdle + 8);
-                    if (!ag->checkpoints.empty() && ag->checkpoints.back().inFineZoom) {
-                        wantHold = (ag->currentFrame >= ag->checkpoints.back().fineCheckFrame);
-                    }
                     if (ag->currentHold != wantHold) {
                         ag->currentHold = wantHold;
                         ag->actions.push_back({ ag->currentFrame, wantHold });
@@ -531,8 +534,8 @@ class $modify(MyPlayLayer, PlayLayer) {
             m_fields->trajectoryNode->clear();
             if (AutoBot::showTrajectories && ag) {
                 auto draw = [&](const std::vector<CCPoint>& pts, ccColor4F col) {
-                    CCPoint p = curPos;
-                    for (const auto& pt : pts) { m_fields->trajectoryNode->drawSegment(p, pt, 0.5f, col); p = pt; }
+                    CCPoint prev = curPos;
+                    for (const auto& pt : pts) { m_fields->trajectoryNode->drawSegment(prev, pt, 0.5f, col); prev = pt; }
                 };
                 draw(ag->idlePath, { 0.1f, 1.0f, 0.1f, 0.9f });
                 draw(ag->holdPath, { 1.0f, 0.15f, 0.15f, 0.9f });
@@ -541,21 +544,7 @@ class $modify(MyPlayLayer, PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* obj) {
-        if (AutoBot::isSimulating) {
-            if (player) player->m_isDead = true;
-            return;
-        }
-        if (AutoBot::isRecording) {
-            if (auto* ag = AutoBot::getActiveAgent()) {
-                if (!ag->checkpoints.empty()) {
-                    auto& cp = ag->checkpoints.back();
-                    if (cp.inFineZoom && cp.fineCheckFrame > cp.deathFakeFrame && AutoBot::agents.size() > 1) {
-                        AutoBot::agents.erase(AutoBot::agents.begin() + AutoBot::activeAgentIndex);
-                        AutoBot::activeAgentIndex = 0;
-                    }
-                }
-            }
-        }
+        if (AutoBot::isSimulating) { if (player) player->m_isDead = true; return; }
         PlayLayer::destroyPlayer(player, obj);
     }
 
