@@ -30,6 +30,8 @@ struct OrbChainNode {
 struct BotCheckpoint {
     int frame;
     size_t actionCount;
+    bool allowHoldJump;
+    int singleClickFails;
     std::set<int> failedJumpFrames;
     std::vector<float> triedEdges;
     std::vector<CCPoint> deadlyOrbs;
@@ -54,12 +56,10 @@ struct QuantumAgent {
 };
 
 namespace AutoBot {
-    // Всегда выключены при запуске игры
     bool isRecording = false;
     bool isPlaying = false;
     bool showTrajectories = false;
 
-    // Сохраняемые между сессиями настройки
     bool collectCoins = true;
     bool humanizeClicks = true;
     bool frameStepperActive = false;
@@ -92,9 +92,7 @@ namespace AutoBot {
 
     void loadSettings() {
         auto mod = Mod::get();
-        isRecording = false;
-        isPlaying = false;
-        showTrajectories = false;
+        isRecording = false; isPlaying = false; showTrajectories = false;
         collectCoins = mod->getSavedValue<bool>("collectCoins", true);
         humanizeClicks = mod->getSavedValue<bool>("humanizeClicks", true);
         frameStepperActive = mod->getSavedValue<bool>("frameStepperActive", false);
@@ -110,10 +108,7 @@ namespace AutoBot {
         return &agents[activeAgentIndex];
     }
 
-    void cycleAgent() {
-        if (agents.size() <= 1) return;
-        activeAgentIndex = (activeAgentIndex + 1) % static_cast<int>(agents.size());
-    }
+    void cycleAgent() { if (agents.size() > 1) activeAgentIndex = (activeAgentIndex + 1) % static_cast<int>(agents.size()); }
 
     void saveMacro(const std::string& levelName, const std::vector<MacroAction>& acts) {
         auto path = Mod::get()->getSaveDir() / (levelName + ".txt");
@@ -122,9 +117,7 @@ namespace AutoBot {
     }
 }
 
-$on_mod(Loaded) {
-    AutoBot::loadSettings();
-}
+$on_mod(Loaded) { AutoBot::loadSettings(); }
 class AutoBotPopup : public FLAlertLayer {
 protected:
     CCLabelBMFont* m_agentsLabel = nullptr;
@@ -137,12 +130,12 @@ protected:
 
         auto winSize = CCDirector::sharedDirector()->getWinSize();
         auto bg = CCScale9Sprite::create("GJ_square01.png");
-        bg->setContentSize({ 360.f, 315.f });
+        bg->setContentSize({ 430.f, 315.f });
         bg->setPosition(winSize / 2.f);
         m_mainLayer->addChild(bg);
 
         auto title = CCLabelBMFont::create("Quantum AutoBot Settings", "goldFont.fnt");
-        title->setScale(0.58f);
+        title->setScale(0.6f);
         title->setPosition({ winSize.width / 2.f, winSize.height / 2.f + 138.f });
         m_mainLayer->addChild(title);
 
@@ -151,69 +144,74 @@ protected:
         m_mainLayer->addChild(menu);
 
         auto closeSpr = CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png");
-        closeSpr->setScale(0.75f);
+        closeSpr->setScale(0.65f);
         auto closeBtn = CCMenuItemSpriteExtra::create(closeSpr, this, menu_selector(AutoBotPopup::onClose));
-        closeBtn->setPosition({ winSize.width / 2.f - 165.f, winSize.height / 2.f + 144.f });
+        closeBtn->setPosition({ winSize.width / 2.f - 198.f, winSize.height / 2.f + 142.f });
         menu->addChild(closeBtn);
 
         auto addToggle = [&](const char* text, float y, bool state, SEL_MenuHandler cb) {
             auto lbl = CCLabelBMFont::create(text, "bigFont.fnt");
-            lbl->setScale(0.33f);
+            lbl->setScale(0.34f);
             lbl->setAnchorPoint({ 0.f, 0.5f });
-            lbl->setPosition({ winSize.width / 2.f - 152.f, winSize.height / 2.f + y });
+            lbl->setPosition({ winSize.width / 2.f - 185.f, winSize.height / 2.f + y });
             m_mainLayer->addChild(lbl);
 
-            auto tog = CCMenuItemToggler::create(
-                ButtonSprite::create("OFF", "goldFont.fnt", "GJ_button_06.png", 0.34f),
-                ButtonSprite::create("ON", "goldFont.fnt", "GJ_button_01.png", 0.34f), this, cb
-            );
+            auto offSpr = ButtonSprite::create("OFF", "goldFont.fnt", "GJ_button_06.png", 0.5f);
+            auto onSpr = ButtonSprite::create("ON", "goldFont.fnt", "GJ_button_01.png", 0.5f);
+            offSpr->setScale(0.56f);
+            onSpr->setScale(0.56f);
+            auto tog = CCMenuItemToggler::create(offSpr, onSpr, this, cb);
             tog->toggle(state);
-            tog->setPosition({ winSize.width / 2.f + 128.f, winSize.height / 2.f + y });
+            tog->setPosition({ winSize.width / 2.f + 155.f, winSize.height / 2.f + y });
             menu->addChild(tog);
         };
 
         addToggle("Show NOP Paths:", 112.f, AutoBot::showTrajectories, menu_selector(AutoBotPopup::onTogglePaths));
-        addToggle("Quantum Path Finder:", 86.f, AutoBot::isRecording, menu_selector(AutoBotPopup::onToggleRecord));
-        addToggle("Playback (Showcase):", 60.f, AutoBot::isPlaying, menu_selector(AutoBotPopup::onTogglePlay));
-        addToggle("Collect Coins:", 34.f, AutoBot::collectCoins, menu_selector(AutoBotPopup::onToggleCoins));
-        addToggle("Humanize Clicks:", 8.f, AutoBot::humanizeClicks, menu_selector(AutoBotPopup::onToggleHuman));
-        addToggle("Frame Stepper (Key F):", -18.f, AutoBot::frameStepperActive, menu_selector(AutoBotPopup::onToggleStepper));
+        addToggle("Quantum Path Finder:", 85.f, AutoBot::isRecording, menu_selector(AutoBotPopup::onToggleRecord));
+        addToggle("Playback (Showcase):", 58.f, AutoBot::isPlaying, menu_selector(AutoBotPopup::onTogglePlay));
+        addToggle("Collect Coins:", 31.f, AutoBot::collectCoins, menu_selector(AutoBotPopup::onToggleCoins));
+        addToggle("Humanize Clicks:", 4.f, AutoBot::humanizeClicks, menu_selector(AutoBotPopup::onToggleHuman));
+        addToggle("Frame Stepper (Key F):", -23.f, AutoBot::frameStepperActive, menu_selector(AutoBotPopup::onToggleStepper));
 
         auto addStepper = [&](const char* text, float y, CCLabelBMFont*& valLbl, SEL_MenuHandler decCb, SEL_MenuHandler incCb) {
             auto lbl = CCLabelBMFont::create(text, "bigFont.fnt");
-            lbl->setScale(0.33f);
+            lbl->setScale(0.34f);
             lbl->setAnchorPoint({ 0.f, 0.5f });
-            lbl->setPosition({ winSize.width / 2.f - 152.f, winSize.height / 2.f + y });
+            lbl->setPosition({ winSize.width / 2.f - 185.f, winSize.height / 2.f + y });
             m_mainLayer->addChild(lbl);
 
-            auto minus = CCMenuItemSpriteExtra::create(ButtonSprite::create("-", "goldFont.fnt", "GJ_button_04.png", 0.32f), this, decCb);
-            minus->setPosition({ winSize.width / 2.f + 85.f, winSize.height / 2.f + y });
+            auto minSpr = ButtonSprite::create("-", "goldFont.fnt", "GJ_button_04.png", 0.5f);
+            minSpr->setScale(0.52f);
+            auto minus = CCMenuItemSpriteExtra::create(minSpr, this, decCb);
+            minus->setPosition({ winSize.width / 2.f + 115.f, winSize.height / 2.f + y });
             menu->addChild(minus);
 
             valLbl = CCLabelBMFont::create("0", "goldFont.fnt");
-            valLbl->setScale(0.42f);
-            valLbl->setPosition({ winSize.width / 2.f + 114.f, winSize.height / 2.f + y });
+            valLbl->setScale(0.45f);
+            valLbl->setPosition({ winSize.width / 2.f + 150.f, winSize.height / 2.f + y });
             m_mainLayer->addChild(valLbl);
 
-            auto plus = CCMenuItemSpriteExtra::create(ButtonSprite::create("+", "goldFont.fnt", "GJ_button_04.png", 0.32f), this, incCb);
-            plus->setPosition({ winSize.width / 2.f + 143.f, winSize.height / 2.f + y });
+            auto plsSpr = ButtonSprite::create("+", "goldFont.fnt", "GJ_button_04.png", 0.5f);
+            plsSpr->setScale(0.52f);
+            auto plus = CCMenuItemSpriteExtra::create(plsSpr, this, incCb);
+            plus->setPosition({ winSize.width / 2.f + 185.f, winSize.height / 2.f + y });
             menu->addChild(plus);
         };
 
-        addStepper("Learning Speed:", -46.f, m_learnLabel, menu_selector(AutoBotPopup::onDecLearn), menu_selector(AutoBotPopup::onIncLearn));
-        addStepper("Max Path Length:", -72.f, m_pathLabel, menu_selector(AutoBotPopup::onDecPath), menu_selector(AutoBotPopup::onIncPath));
-        addStepper("Max Quantum Agents:", -98.f, m_agentsLabel, menu_selector(AutoBotPopup::onDecAgents), menu_selector(AutoBotPopup::onIncAgents));
+        addStepper("Learning Speed:", -52.f, m_learnLabel, menu_selector(AutoBotPopup::onDecLearn), menu_selector(AutoBotPopup::onIncLearn));
+        addStepper("Max Path Length:", -79.f, m_pathLabel, menu_selector(AutoBotPopup::onDecPath), menu_selector(AutoBotPopup::onIncPath));
+        addStepper("Max Quantum Agents:", -106.f, m_agentsLabel, menu_selector(AutoBotPopup::onDecAgents), menu_selector(AutoBotPopup::onIncAgents));
 
         auto bindLbl = CCLabelBMFont::create("Switch Agent Key:", "bigFont.fnt");
-        bindLbl->setScale(0.33f);
+        bindLbl->setScale(0.34f);
         bindLbl->setAnchorPoint({ 0.f, 0.5f });
-        bindLbl->setPosition({ winSize.width / 2.f - 152.f, winSize.height / 2.f - 126.f });
+        bindLbl->setPosition({ winSize.width / 2.f - 185.f, winSize.height / 2.f - 134.f });
         m_mainLayer->addChild(bindLbl);
 
         m_keyLabel = CCLabelBMFont::create("TAB", "goldFont.fnt");
-        m_keyLabel->setScale(0.42f);
+        m_keyLabel->setScale(0.45f);
         auto keyBtn = CCMenuItemSpriteExtra::create(m_keyLabel, this, menu_selector(AutoBotPopup::onBindKey));
-        keyBtn->setPosition({ winSize.width / 2.f + 114.f, winSize.height / 2.f - 126.f });
+        keyBtn->setPosition({ winSize.width / 2.f + 150.f, winSize.height / 2.f - 134.f });
         menu->addChild(keyBtn);
 
         refreshLabels();
@@ -259,14 +257,10 @@ protected:
     void onToggleRecord(CCObject* s) {
         AutoBot::isRecording = !static_cast<CCMenuItemToggler*>(s)->isToggled();
         if (auto pl = PlayLayer::get()) {
-            AutoBot::botInput = true;
-            pl->handleButton(false, 1, true);
-            AutoBot::botInput = false;
+            AutoBot::botInput = true; pl->handleButton(false, 1, true); AutoBot::botInput = false;
         }
         if (AutoBot::isRecording) {
-            AutoBot::isPlaying = false;
-            AutoBot::agents.clear();
-            AutoBot::nextAgentId = 1;
+            AutoBot::isPlaying = false; AutoBot::agents.clear(); AutoBot::nextAgentId = 1;
         }
     }
 
@@ -330,13 +324,8 @@ class $modify(MyPlayerObject, PlayerObject) {
 class $modify(MyBaseGameLayer, GJBaseGameLayer) {
     void handleButton(bool down, int button, bool isPlayer1) {
         if (AutoBot::isSimulating) return;
-        if (!AutoBot::isRecording && !AutoBot::isPlaying) {
-            GJBaseGameLayer::handleButton(down, button, isPlayer1);
-            return;
-        }
-        if (AutoBot::botInput) {
-            GJBaseGameLayer::handleButton(down, button, isPlayer1);
-        }
+        if (!AutoBot::isRecording && !AutoBot::isPlaying) { GJBaseGameLayer::handleButton(down, button, isPlayer1); return; }
+        if (AutoBot::botInput) GJBaseGameLayer::handleButton(down, button, isPlayer1);
     }
 };
 
@@ -346,22 +335,24 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayerObject* nopSim = nullptr;
     };
 
+    void rebuildNOP() {
+        if (m_fields->nopSim) { m_fields->nopSim->removeFromParent(); m_fields->nopSim = nullptr; }
+        m_fields->nopSim = PlayerObject::create(1, 1, this, this->m_objectLayer, true);
+        if (m_fields->nopSim) { m_fields->nopSim->setVisible(false); this->m_objectLayer->addChild(m_fields->nopSim); }
+    }
+
     bool applyOrbPhysics(PlayerObject* nop, GameObject* obj, float& gravDir) {
         auto t = obj->getType();
         if (t == GameObjectType::YellowJumpRing) { nop->m_yVelocity = 602.0 * gravDir; return true; }
         if (t == GameObjectType::PinkJumpRing) { nop->m_yVelocity = 435.0 * gravDir; return true; }
         if (t == GameObjectType::RedJumpRing) { nop->m_yVelocity = 830.0 * gravDir; return true; }
         if (t == GameObjectType::GravityRing) {
-            nop->m_isUpsideDown = !nop->m_isUpsideDown;
-            gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
-            nop->m_yVelocity = -220.0 * gravDir;
-            return true;
+            nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
+            nop->m_yVelocity = -220.0 * gravDir; return true;
         }
         if (t == GameObjectType::GreenRing) {
-            nop->m_isUpsideDown = !nop->m_isUpsideDown;
-            gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
-            nop->m_yVelocity = 580.0 * gravDir;
-            return true;
+            nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
+            nop->m_yVelocity = 580.0 * gravDir; return true;
         }
         if (obj->m_objectID == 1330) { nop->m_yVelocity = -950.0 * gravDir; return true; }
         return false;
@@ -370,24 +361,26 @@ class $modify(MyPlayLayer, PlayLayer) {
     int runNOP(CCPoint startPos, double startYVel, bool startUpside, bool startGrounded, int mode, int steps, std::vector<CCPoint>& pts, bool& outDied, bool& outGotCoin) {
         pts.clear(); outDied = false; outGotCoin = false;
         PlayerObject* realPlayer = this->m_player1;
+        if (!m_fields->nopSim) rebuildNOP();
         PlayerObject* nop = m_fields->nopSim;
         if (!nop || !realPlayer) return 0;
 
-        nop->m_isDead = false; nop->m_position = startPos; nop->m_lastPosition = startPos;
-        nop->setPosition(startPos); nop->m_yVelocity = startYVel; nop->m_gravity = realPlayer->m_gravity;
-        nop->m_playerSpeed = realPlayer->m_playerSpeed; nop->m_isOnGround = startGrounded;
-        nop->m_isUpsideDown = startUpside; nop->m_isShip = realPlayer->m_isShip;
-        nop->m_isBall = realPlayer->m_isBall; nop->m_isBird = realPlayer->m_isBird;
-        nop->m_isDart = realPlayer->m_isDart; nop->m_isRobot = realPlayer->m_isRobot;
-        nop->m_isSpider = realPlayer->m_isSpider; nop->m_isSwing = realPlayer->m_isSwing;
-        nop->setScale(realPlayer->getScale());
+        nop->m_isDead = false; nop->m_isDashing = false; nop->m_isLocked = false;
+        nop->m_position = startPos; nop->m_lastPosition = startPos; nop->setPosition(startPos);
+        nop->m_yVelocity = startYVel; nop->m_gravity = realPlayer->m_gravity;
+        nop->m_playerSpeed = (realPlayer->m_playerSpeed > 0.1f) ? realPlayer->m_playerSpeed : 1.0f;
+        nop->m_isOnGround = startGrounded; nop->m_isUpsideDown = startUpside;
+        nop->m_isShip = realPlayer->m_isShip; nop->m_isBall = realPlayer->m_isBall;
+        nop->m_isBird = realPlayer->m_isBird; nop->m_isDart = realPlayer->m_isDart;
+        nop->m_isRobot = realPlayer->m_isRobot; nop->m_isSpider = realPlayer->m_isSpider;
+        nop->m_isSwing = realPlayer->m_isSwing; nop->setScale(realPlayer->getScale());
 
         AutoBot::isSimulating = true;
         this->m_player1 = nop;
         int survived = 0; bool jumpedOnce = false;
         GameObject* lastUsedOrb = nullptr;
         const float subDt = (1.0f / 60.0f) / 4.0f;
-        float mult = (nop->m_playerSpeed > 0.1f) ? nop->m_playerSpeed : 1.0f;
+        float mult = nop->m_playerSpeed;
 
         for (int s = 0; s < steps; ++s) {
             bool hold = (mode == 1) || (mode == 2 && !jumpedOnce);
@@ -402,22 +395,19 @@ class $modify(MyPlayLayer, PlayLayer) {
                     nop->m_yVelocity = std::clamp(nop->m_yVelocity, -550.0, 550.0);
                 } else if (nop->m_isSwing) {
                     if (hold && s == 0 && sub == 0) { nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = -gravDir; jumpedOnce = true; }
-                    nop->m_yVelocity -= 1800.0 * gravDir * subDt;
-                    nop->m_yVelocity = std::clamp(nop->m_yVelocity, -520.0, 520.0);
+                    nop->m_yVelocity = std::clamp(nop->m_yVelocity - 1800.0 * gravDir * subDt, -520.0, 520.0);
                 } else if (nop->m_isBird) {
                     if (hold && s == 0 && sub == 0) { nop->m_yVelocity = 430.0 * gravDir; jumpedOnce = true; }
                     nop->m_yVelocity -= 1950.0 * gravDir * subDt;
                 } else {
                     if (hold && nop->m_isOnGround) {
                         if (nop->m_isBall || nop->m_isSpider) {
-                            nop->m_isUpsideDown = !nop->m_isUpsideDown;
-                            gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
+                            nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
                             nop->m_yVelocity = (nop->m_isSpider ? -1200.0 : -200.0) * gravDir;
                         } else nop->m_yVelocity = (nop->m_isRobot ? 640.0 : 602.0) * gravDir;
                         nop->m_isOnGround = false; jumpedOnce = true;
                     }
-                    nop->m_yVelocity -= 2865.0 * gravDir * subDt;
-                    nop->m_yVelocity = std::clamp(nop->m_yVelocity, -810.0, 810.0);
+                    nop->m_yVelocity = std::clamp(nop->m_yVelocity - 2865.0 * gravDir * subDt, -810.0, 810.0);
                 }
 
                 nop->m_position.x += 311.58f * mult * subDt;
@@ -444,9 +434,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             survived++;
             if (mode == 2 && jumpedOnce && nop->m_isOnGround) break;
         }
-
-        this->m_player1 = realPlayer;
-        AutoBot::isSimulating = false;
+        this->m_player1 = realPlayer; AutoBot::isSimulating = false;
         return survived;
     }
     bool isOrbAlwaysFatal(const OrbChainNode& node) {
@@ -454,7 +442,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         int span = std::max(1, node.lastValidFrame - node.firstValidFrame);
         float mult = (this->m_player1 && this->m_player1->m_playerSpeed > 0.1f) ? this->m_player1->m_playerSpeed : 1.0f;
         float dxPerFrame = 311.58f * mult * (1.0f / 60.0f);
-
         for (int offset : { 0, span, span / 2 }) {
             CCPoint testPos = { node.entryPos.x + offset * dxPerFrame, node.entryPos.y };
             runNOP(testPos, node.entryYVel, node.entryUpside, false, 2, AutoBot::maxPath, tmp, died, coin);
@@ -467,14 +454,14 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (!PlayLayer::init(level, dontCreateObjects)) return false;
         m_fields->trajectoryNode = CCDrawNode::create();
         this->m_objectLayer->addChild(m_fields->trajectoryNode, 1000);
-        m_fields->nopSim = PlayerObject::create(1, 1, this, this->m_objectLayer, true);
-        if (m_fields->nopSim) { m_fields->nopSim->setVisible(false); this->m_objectLayer->addChild(m_fields->nopSim); }
+        rebuildNOP();
         return true;
     }
 
     void resetLevel() override {
         PlayLayer::resetLevel();
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
+        rebuildNOP();
         if (!this->m_player1) return;
         if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {} });
         if (auto* ag = AutoBot::getActiveAgent()) {
@@ -531,6 +518,12 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool diedIdle = false, diedHold = false, diedOne = false, coinIdle = false, coinHold = false, coinOne = false;
         int sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle);
 
+        // Система восстановления длины ЛОПа: если ЛОП подозрительно короткий (<10 шагов), пересобираем НОП и пересчитываем
+        if (sIdle < 10 && !diedIdle) {
+            rebuildNOP();
+            sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle);
+        }
+
         CCPoint jumpOrigin = curPos; double jumpYVel = p->m_yVelocity; bool jumpGround = p->m_isOnGround;
         bool canActNow = p->m_isOnGround || (currentOrb != nullptr) || isHoldOnlyMode || isClickOnlyMode;
         if (!canActNow && ag->idlePath.size() > 2) {
@@ -544,18 +537,25 @@ class $modify(MyPlayLayer, PlayLayer) {
         ag->holdPath.clear(); ag->oneClickPath.clear();
         int sHold = 0, sOne = 0;
         if (canActNow) {
-            if (!isClickOnlyMode) sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold);
-            if (!isHoldOnlyMode) sOne = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 2, AutoBot::maxPath, ag->oneClickPath, diedOne, coinOne);
+            if (!isClickOnlyMode) {
+                sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold);
+                if (sHold < 10 && !diedHold) { rebuildNOP(); sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold); }
+            }
+            if (!isHoldOnlyMode) {
+                sOne = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 2, AutoBot::maxPath, ag->oneClickPath, diedOne, coinOne);
+                if (sOne < 8 && !diedOne) { rebuildNOP(); sOne = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 2, AutoBot::maxPath, ag->oneClickPath, diedOne, coinOne); }
+            }
         }
 
         if (AutoBot::isRecording) {
             if (!this->m_isPracticeMode) this->togglePracticeMode(true);
             unsigned int cpCount = this->m_checkpointArray ? this->m_checkpointArray->count() : 0;
-            while (ag->checkpoints.size() < cpCount) ag->checkpoints.push_back({ ag->currentFrame, ag->actions.size(), {}, {}, {} });
+            while (ag->checkpoints.size() < cpCount) ag->checkpoints.push_back({ ag->currentFrame, ag->actions.size(), false, 0, {}, {}, {} });
             while (ag->checkpoints.size() > cpCount && !ag->checkpoints.empty()) ag->checkpoints.pop_back();
 
             ag->currentFrame++; ag->savedPos = curPos; ag->savedYVel = p->m_yVelocity; ag->savedUpsideDown = p->m_isUpsideDown;
             bool wantHold = false;
+            bool holdAllowed = isHoldOnlyMode || (!ag->checkpoints.empty() && ag->checkpoints.back().allowHoldJump);
             bool forbidden = (!ag->checkpoints.empty() && ag->checkpoints.back().failedJumpFrames.count(ag->currentFrame));
 
             bool isBlockEdge = p->m_isOnGround && !ag->idlePath.empty() && (ag->idlePath.back().y < curPos.y - 18.f) && !diedIdle;
@@ -577,14 +577,17 @@ class $modify(MyPlayLayer, PlayLayer) {
                 }
             } else if (!forbidden && canActNow && (p->m_isOnGround || isHoldOnlyMode || isClickOnlyMode)) {
                 bool safeOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty();
-                bool safeHold = !isClickOnlyMode && !diedHold && !ag->holdPath.empty();
+                bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty();
+
                 if (AutoBot::collectCoins && !coinIdle && ((coinOne && safeOne) || (coinHold && safeHold))) {
                     if (coinOne && safeOne) { ag->singleClickTimer = 2; wantHold = true; } else wantHold = true;
                 } else if (diedIdle) {
                     if (safeOne) {
                         if (AutoBot::humanizeClicks && ag->humanDelayCounter < 2 && p->m_isOnGround) ag->humanDelayCounter++;
                         else { ag->humanDelayCounter = 0; ag->singleClickTimer = 2; wantHold = true; }
-                    } else if (safeHold && sHold > sIdle + 8) wantHold = true;
+                    } else if (safeHold && sHold > sIdle + 8) {
+                        wantHold = true;
+                    }
                 } else ag->humanDelayCounter = 0;
             }
 
@@ -615,6 +618,9 @@ class $modify(MyPlayLayer, PlayLayer) {
             if (auto* ag = AutoBot::getActiveAgent()) {
                 if (!ag->checkpoints.empty()) {
                     auto& cp = ag->checkpoints.back();
+                    cp.singleClickFails++;
+                    // Активируем флаг необходимости прыгать зажимом только после неудач 1 кликом
+                    if (cp.singleClickFails >= 3) cp.allowHoldJump = true;
                     for (auto it = ag->orbChain.rbegin(); it != ag->orbChain.rend(); ++it) {
                         if (isOrbAlwaysFatal(*it)) cp.deadlyOrbs.push_back(it->orb->getPosition());
                         else break;
