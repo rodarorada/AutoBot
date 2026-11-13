@@ -318,7 +318,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             nop->m_yVelocity = 580.0 * gravDir;
             return true;
         }
-        if (t == GameObjectType::BlackRing) { nop->m_yVelocity = -950.0 * gravDir; return true; }
+        if (obj->m_objectID == 1330) { nop->m_yVelocity = -950.0 * gravDir; return true; }
         return false;
     }
 
@@ -411,7 +411,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         return true;
     }
 
-    void resetLevel() {
+    void resetLevel() override {
         PlayLayer::resetLevel();
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
         if (!this->m_player1) return;
@@ -442,7 +442,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::update(dt);
     }
 
-    void postUpdate(float dt) {
+    void postUpdate(float dt) override {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead || AutoBot::isSimulating) return;
 
@@ -469,7 +469,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         CCPoint curPos = p->getPosition();
         bool isGroundedMode = !p->m_isShip && !p->m_isDart && !p->m_isBird;
 
-        // Проверяем, касается ли игрок сейчас орба в воздухе
         bool touchingOrb = false;
         if (this->m_objects) {
             CCRect pRect = { curPos.x - 14.f, curPos.y - 14.f, 28.f, 28.f };
@@ -477,7 +476,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                 if (!obj || std::abs(obj->getPositionX() - curPos.x) > 40.f) continue;
                 auto t = obj->getType();
                 if (t == GameObjectType::YellowJumpRing || t == GameObjectType::PinkJumpRing || t == GameObjectType::RedJumpRing ||
-                    t == GameObjectType::GravityRing || t == GameObjectType::GreenRing || t == GameObjectType::BlackRing) {
+                    t == GameObjectType::GravityRing || t == GameObjectType::GreenRing || obj->m_objectID == 1330) {
                     if (pRect.intersectsRect(obj->getObjectRect())) { touchingOrb = true; break; }
                 }
             }
@@ -559,7 +558,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
     }
 
-    void destroyPlayer(PlayerObject* player, GameObject* obj) {
+    void destroyPlayer(PlayerObject* player, GameObject* obj) override {
         if (AutoBot::isSimulating) { if (player) player->m_isDead = true; return; }
         if (AutoBot::isRecording) {
             if (auto* ag = AutoBot::getActiveAgent()) {
