@@ -512,7 +512,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                     if (cp.inFineZoom && cp.fineCheckFrame > cp.deathFakeFrame && AutoBot::agents.size() > 1) {
                         AutoBot::agents.erase(AutoBot::agents.begin() + AutoBot::activeAgentIndex);
                         AutoBot::activeAgentIndex = 0;
-                    }    void triggerObject(GJBaseGameLayer* layer, int uniqueID, gd::vector<int> const* remap) {
+                    }
                 }
             }
         }
@@ -526,4 +526,5 @@ class $modify(MyPlayLayer, PlayLayer) {
             if (auto* ag = AutoBot::getActiveAgent()) AutoBot::saveMacro(this->m_level->m_levelName, ag->actions);
         }
     }
+};
 };
