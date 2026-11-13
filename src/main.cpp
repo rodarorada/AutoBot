@@ -13,10 +13,7 @@
 
 using namespace geode::prelude;
 
-struct MacroAction {
-    int frame;
-    bool hold;
-};
+struct MacroAction { int frame; bool hold; };
 
 struct OrbChainNode {
     GameObject* orb;
@@ -56,27 +53,13 @@ struct QuantumAgent {
 };
 
 namespace AutoBot {
-    bool isRecording = false;
-    bool isPlaying = false;
-    bool showTrajectories = false;
-
-    bool collectCoins = true;
-    bool humanizeClicks = true;
-    bool frameStepperActive = false;
-    int maxAgents = 4;
-    int maxPath = 90;
-    int learningSpeed = 5;
-    enumKeyCodes switchKey = KEY_Tab;
-    enumKeyCodes stepKey = KEY_F;
-
-    bool stepOneFrameRequested = false;
-    bool isSimulating = false;
-    bool botInput = false;
-    bool isWaitingForKey = false;
-    bool switchRequested = false;
-
-    int activeAgentIndex = 0;
-    int nextAgentId = 1;
+    bool isRecording = false, isPlaying = false, showTrajectories = false;
+    bool collectCoins = true, humanizeClicks = true, frameStepperActive = false;
+    int maxAgents = 4, maxPath = 90, learningSpeed = 5;
+    enumKeyCodes switchKey = KEY_Tab, stepKey = KEY_F;
+    bool stepOneFrameRequested = false, isSimulating = false, botInput = false;
+    bool isWaitingForKey = false, switchRequested = false;
+    int activeAgentIndex = 0, nextAgentId = 1;
     std::vector<QuantumAgent> agents;
 
     void saveSettings() {
@@ -120,14 +103,10 @@ namespace AutoBot {
 $on_mod(Loaded) { AutoBot::loadSettings(); }
 class AutoBotPopup : public FLAlertLayer {
 protected:
-    CCLabelBMFont* m_agentsLabel = nullptr;
-    CCLabelBMFont* m_pathLabel = nullptr;
-    CCLabelBMFont* m_learnLabel = nullptr;
-    CCLabelBMFont* m_keyLabel = nullptr;
+    CCLabelBMFont *m_agentsLabel = nullptr, *m_pathLabel = nullptr, *m_learnLabel = nullptr, *m_keyLabel = nullptr;
 
     bool init() override {
         if (!FLAlertLayer::init(150)) return false;
-
         auto winSize = CCDirector::sharedDirector()->getWinSize();
         auto bg = CCScale9Sprite::create("GJ_square01.png");
         bg->setContentSize({ 430.f, 315.f });
@@ -151,18 +130,14 @@ protected:
 
         auto addToggle = [&](const char* text, float y, bool state, SEL_MenuHandler cb) {
             auto lbl = CCLabelBMFont::create(text, "bigFont.fnt");
-            lbl->setScale(0.34f);
-            lbl->setAnchorPoint({ 0.f, 0.5f });
+            lbl->setScale(0.34f); lbl->setAnchorPoint({ 0.f, 0.5f });
             lbl->setPosition({ winSize.width / 2.f - 185.f, winSize.height / 2.f + y });
             m_mainLayer->addChild(lbl);
-
             auto offSpr = ButtonSprite::create("OFF", "goldFont.fnt", "GJ_button_06.png", 0.5f);
             auto onSpr = ButtonSprite::create("ON", "goldFont.fnt", "GJ_button_01.png", 0.5f);
-            offSpr->setScale(0.56f);
-            onSpr->setScale(0.56f);
+            offSpr->setScale(0.56f); onSpr->setScale(0.56f);
             auto tog = CCMenuItemToggler::create(offSpr, onSpr, this, cb);
-            tog->toggle(state);
-            tog->setPosition({ winSize.width / 2.f + 155.f, winSize.height / 2.f + y });
+            tog->toggle(state); tog->setPosition({ winSize.width / 2.f + 155.f, winSize.height / 2.f + y });
             menu->addChild(tog);
         };
 
@@ -175,27 +150,17 @@ protected:
 
         auto addStepper = [&](const char* text, float y, CCLabelBMFont*& valLbl, SEL_MenuHandler decCb, SEL_MenuHandler incCb) {
             auto lbl = CCLabelBMFont::create(text, "bigFont.fnt");
-            lbl->setScale(0.34f);
-            lbl->setAnchorPoint({ 0.f, 0.5f });
+            lbl->setScale(0.34f); lbl->setAnchorPoint({ 0.f, 0.5f });
             lbl->setPosition({ winSize.width / 2.f - 185.f, winSize.height / 2.f + y });
             m_mainLayer->addChild(lbl);
-
-            auto minSpr = ButtonSprite::create("-", "goldFont.fnt", "GJ_button_04.png", 0.5f);
-            minSpr->setScale(0.52f);
+            auto minSpr = ButtonSprite::create("-", "goldFont.fnt", "GJ_button_04.png", 0.5f); minSpr->setScale(0.52f);
             auto minus = CCMenuItemSpriteExtra::create(minSpr, this, decCb);
-            minus->setPosition({ winSize.width / 2.f + 115.f, winSize.height / 2.f + y });
-            menu->addChild(minus);
-
-            valLbl = CCLabelBMFont::create("0", "goldFont.fnt");
-            valLbl->setScale(0.45f);
-            valLbl->setPosition({ winSize.width / 2.f + 150.f, winSize.height / 2.f + y });
-            m_mainLayer->addChild(valLbl);
-
-            auto plsSpr = ButtonSprite::create("+", "goldFont.fnt", "GJ_button_04.png", 0.5f);
-            plsSpr->setScale(0.52f);
+            minus->setPosition({ winSize.width / 2.f + 115.f, winSize.height / 2.f + y }); menu->addChild(minus);
+            valLbl = CCLabelBMFont::create("0", "goldFont.fnt"); valLbl->setScale(0.45f);
+            valLbl->setPosition({ winSize.width / 2.f + 150.f, winSize.height / 2.f + y }); m_mainLayer->addChild(valLbl);
+            auto plsSpr = ButtonSprite::create("+", "goldFont.fnt", "GJ_button_04.png", 0.5f); plsSpr->setScale(0.52f);
             auto plus = CCMenuItemSpriteExtra::create(plsSpr, this, incCb);
-            plus->setPosition({ winSize.width / 2.f + 185.f, winSize.height / 2.f + y });
-            menu->addChild(plus);
+            plus->setPosition({ winSize.width / 2.f + 185.f, winSize.height / 2.f + y }); menu->addChild(plus);
         };
 
         addStepper("Learning Speed:", -52.f, m_learnLabel, menu_selector(AutoBotPopup::onDecLearn), menu_selector(AutoBotPopup::onIncLearn));
@@ -203,20 +168,13 @@ protected:
         addStepper("Max Quantum Agents:", -106.f, m_agentsLabel, menu_selector(AutoBotPopup::onDecAgents), menu_selector(AutoBotPopup::onIncAgents));
 
         auto bindLbl = CCLabelBMFont::create("Switch Agent Key:", "bigFont.fnt");
-        bindLbl->setScale(0.34f);
-        bindLbl->setAnchorPoint({ 0.f, 0.5f });
-        bindLbl->setPosition({ winSize.width / 2.f - 185.f, winSize.height / 2.f - 134.f });
-        m_mainLayer->addChild(bindLbl);
-
-        m_keyLabel = CCLabelBMFont::create("TAB", "goldFont.fnt");
-        m_keyLabel->setScale(0.45f);
+        bindLbl->setScale(0.34f); bindLbl->setAnchorPoint({ 0.f, 0.5f });
+        bindLbl->setPosition({ winSize.width / 2.f - 185.f, winSize.height / 2.f - 134.f }); m_mainLayer->addChild(bindLbl);
+        m_keyLabel = CCLabelBMFont::create("TAB", "goldFont.fnt"); m_keyLabel->setScale(0.45f);
         auto keyBtn = CCMenuItemSpriteExtra::create(m_keyLabel, this, menu_selector(AutoBotPopup::onBindKey));
-        keyBtn->setPosition({ winSize.width / 2.f + 150.f, winSize.height / 2.f - 134.f });
-        menu->addChild(keyBtn);
+        keyBtn->setPosition({ winSize.width / 2.f + 150.f, winSize.height / 2.f - 134.f }); menu->addChild(keyBtn);
 
-        refreshLabels();
-        this->setKeypadEnabled(true);
-        return true;
+        refreshLabels(); this->setKeypadEnabled(true); return true;
     }
 
     void refreshLabels() {
@@ -225,18 +183,13 @@ protected:
         if (m_agentsLabel) m_agentsLabel->setString(std::to_string(AutoBot::maxAgents).c_str());
         if (m_keyLabel) {
             if (AutoBot::isWaitingForKey) m_keyLabel->setString("[KEY]");
-            else {
-                const char* kn = CCKeyboardDispatcher::get()->keyToString(AutoBot::switchKey);
-                m_keyLabel->setString(kn ? kn : "KEY");
-            }
+            else { const char* kn = CCKeyboardDispatcher::get()->keyToString(AutoBot::switchKey); m_keyLabel->setString(kn ? kn : "KEY"); }
         }
     }
     void keyDown(enumKeyCodes key, double timestamp) override {
         if (AutoBot::isWaitingForKey) {
             if (key != KEY_Escape) { AutoBot::switchKey = key; AutoBot::saveSettings(); }
-            AutoBot::isWaitingForKey = false;
-            refreshLabels();
-            return;
+            AutoBot::isWaitingForKey = false; refreshLabels(); return;
         }
         FLAlertLayer::keyDown(key, timestamp);
     }
@@ -256,12 +209,8 @@ protected:
 
     void onToggleRecord(CCObject* s) {
         AutoBot::isRecording = !static_cast<CCMenuItemToggler*>(s)->isToggled();
-        if (auto pl = PlayLayer::get()) {
-            AutoBot::botInput = true; pl->handleButton(false, 1, true); AutoBot::botInput = false;
-        }
-        if (AutoBot::isRecording) {
-            AutoBot::isPlaying = false; AutoBot::agents.clear(); AutoBot::nextAgentId = 1;
-        }
+        if (auto pl = PlayLayer::get()) { AutoBot::botInput = true; pl->handleButton(false, 1, true); AutoBot::botInput = false; }
+        if (AutoBot::isRecording) { AutoBot::isPlaying = false; AutoBot::agents.clear(); AutoBot::nextAgentId = 1; }
     }
 
     void onTogglePlay(CCObject* s) {
@@ -273,8 +222,7 @@ public:
     static AutoBotPopup* create() {
         auto ret = new AutoBotPopup();
         if (ret && ret->init()) { ret->autorelease(); return ret; }
-        CC_SAFE_DELETE(ret);
-        return nullptr;
+        CC_SAFE_DELETE(ret); return nullptr;
     }
 };
 
@@ -292,9 +240,7 @@ class $modify(MyPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
         auto winSize = CCDirector::sharedDirector()->getWinSize();
-        auto menu = CCMenu::create();
-        menu->setPosition({ winSize.width - 45.f, 45.f });
-        this->addChild(menu);
+        auto menu = CCMenu::create(); menu->setPosition({ winSize.width - 45.f, 45.f }); this->addChild(menu);
         auto spr = CircleButtonSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png", 1.f, CircleBaseColor::Green, CircleBaseSize::Small);
         menu->addChild(CCMenuItemSpriteExtra::create(spr, this, menu_selector(MyPauseLayer::onOpenAutoBot)));
     }
@@ -321,6 +267,7 @@ class $modify(MyPlayerObject, PlayerObject) {
         }
     }
 };
+
 class $modify(MyBaseGameLayer, GJBaseGameLayer) {
     void handleButton(bool down, int button, bool isPlayer1) {
         if (AutoBot::isSimulating) return;
@@ -328,7 +275,6 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         if (AutoBot::botInput) GJBaseGameLayer::handleButton(down, button, isPlayer1);
     }
 };
-
 class $modify(MyPlayLayer, PlayLayer) {
     struct Fields {
         CCDrawNode* trajectoryNode = nullptr;
@@ -341,20 +287,38 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (m_fields->nopSim) { m_fields->nopSim->setVisible(false); this->m_objectLayer->addChild(m_fields->nopSim); }
     }
 
-    bool applyOrbPhysics(PlayerObject* nop, GameObject* obj, float& gravDir) {
-        auto t = obj->getType();
-        if (t == GameObjectType::YellowJumpRing) { nop->m_yVelocity = 602.0 * gravDir; return true; }
-        if (t == GameObjectType::PinkJumpRing) { nop->m_yVelocity = 435.0 * gravDir; return true; }
-        if (t == GameObjectType::RedJumpRing) { nop->m_yVelocity = 830.0 * gravDir; return true; }
+    bool isAnyOrb(GameObject* obj) {
+        if (!obj) return false;
+        auto t = obj->getType(); int id = obj->m_objectID;
+        return t == GameObjectType::YellowJumpRing || t == GameObjectType::PinkJumpRing ||
+               t == GameObjectType::RedJumpRing || t == GameObjectType::GravityRing ||
+               t == GameObjectType::GreenRing || t == GameObjectType::DashRing ||
+               t == GameObjectType::GravityDashRing || id == 1330 || id == 1704 || id == 1751 || id == 3004;
+    }
+
+    bool applyOrbPhysics(PlayerObject* nop, GameObject* obj, float& gravDir, bool& isDashing) {
+        auto t = obj->getType(); int id = obj->m_objectID;
+        if (t == GameObjectType::YellowJumpRing) { nop->m_yVelocity = 602.0 * gravDir; isDashing = false; return true; }
+        if (t == GameObjectType::PinkJumpRing) { nop->m_yVelocity = 435.0 * gravDir; isDashing = false; return true; }
+        if (t == GameObjectType::RedJumpRing) { nop->m_yVelocity = 830.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::GravityRing) {
             nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
-            nop->m_yVelocity = -220.0 * gravDir; return true;
+            nop->m_yVelocity = -220.0 * gravDir; isDashing = false; return true;
         }
         if (t == GameObjectType::GreenRing) {
             nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
-            nop->m_yVelocity = 580.0 * gravDir; return true;
+            nop->m_yVelocity = 580.0 * gravDir; isDashing = false; return true;
         }
-        if (obj->m_objectID == 1330) { nop->m_yVelocity = -950.0 * gravDir; return true; }
+        if (id == 1330) { nop->m_yVelocity = -950.0 * gravDir; isDashing = false; return true; }
+        if (t == GameObjectType::DashRing || id == 1704) { nop->m_yVelocity = 0.0; isDashing = true; return true; }
+        if (t == GameObjectType::GravityDashRing || id == 1751) {
+            nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
+            nop->m_yVelocity = 0.0; isDashing = true; return true;
+        }
+        if (id == 3004) {
+            nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
+            nop->m_yVelocity = -1500.0 * gravDir; isDashing = false; return true;
+        }
         return false;
     }
 
@@ -373,8 +337,11 @@ class $modify(MyPlayLayer, PlayLayer) {
         nop->m_isShip = realPlayer->m_isShip; nop->m_isBall = realPlayer->m_isBall;
         nop->m_isBird = realPlayer->m_isBird; nop->m_isDart = realPlayer->m_isDart;
         nop->m_isRobot = realPlayer->m_isRobot; nop->m_isSpider = realPlayer->m_isSpider;
-        nop->m_isSwing = realPlayer->m_isSwing; nop->setScale(realPlayer->getScale());
+        nop->m_isSwing = realPlayer->m_isSwing;
+        nop->m_vehicleSize = realPlayer->m_vehicleSize;
+        nop->setScale(realPlayer->getScale());
 
+        bool isDashing = realPlayer->m_isDashing;
         AutoBot::isSimulating = true;
         this->m_player1 = nop;
         int survived = 0; bool jumpedOnce = false;
@@ -389,29 +356,37 @@ class $modify(MyPlayLayer, PlayLayer) {
                 float gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
                 if (nop->m_yVelocity * gravDir > 15.0) nop->m_isOnGround = false;
 
-                if (nop->m_isDart) nop->m_yVelocity = (hold ? 311.58f * mult : -311.58f * mult) * gravDir;
-                else if (nop->m_isShip) {
-                    nop->m_yVelocity += (hold ? 1380.0f : -1120.0f) * gravDir * subDt;
-                    nop->m_yVelocity = std::clamp(nop->m_yVelocity, -550.0, 550.0);
-                } else if (nop->m_isSwing) {
-                    if (hold && s == 0 && sub == 0) { nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = -gravDir; jumpedOnce = true; }
-                    nop->m_yVelocity = std::clamp(nop->m_yVelocity - 1800.0 * gravDir * subDt, -520.0, 520.0);
-                } else if (nop->m_isBird) {
-                    if (hold && s == 0 && sub == 0) { nop->m_yVelocity = 430.0 * gravDir; jumpedOnce = true; }
-                    nop->m_yVelocity -= 1950.0 * gravDir * subDt;
-                } else {
-                    if (hold && nop->m_isOnGround) {
-                        if (nop->m_isBall || nop->m_isSpider) {
-                            nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
-                            nop->m_yVelocity = (nop->m_isSpider ? -1200.0 : -200.0) * gravDir;
-                        } else nop->m_yVelocity = (nop->m_isRobot ? 640.0 : 602.0) * gravDir;
-                        nop->m_isOnGround = false; jumpedOnce = true;
+                if (isDashing && hold) { nop->m_yVelocity = 0.0; }
+                else {
+                    isDashing = false;
+                    if (nop->m_isDart) nop->m_yVelocity = (hold ? 311.58f * mult : -311.58f * mult) * gravDir;
+                    else if (nop->m_isShip) {
+                        nop->m_yVelocity += (hold ? 1380.0f : -1120.0f) * gravDir * subDt;
+                        nop->m_yVelocity = std::clamp(nop->m_yVelocity, -550.0, 550.0);
+                    } else if (nop->m_isSwing) {
+                        if (hold && s == 0 && sub == 0) { nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = -gravDir; jumpedOnce = true; }
+                        nop->m_yVelocity = std::clamp(nop->m_yVelocity - 1800.0 * gravDir * subDt, -520.0, 520.0);
+                    } else if (nop->m_isBird) {
+                        if (hold && s == 0 && sub == 0) { nop->m_yVelocity = 430.0 * gravDir; jumpedOnce = true; }
+                        nop->m_yVelocity -= 1950.0 * gravDir * subDt;
+                    } else {
+                        if (hold && nop->m_isOnGround) {
+                            if (nop->m_isBall || nop->m_isSpider) {
+                                nop->m_isUpsideDown = !nop->m_isUpsideDown; gravDir = nop->m_isUpsideDown ? -1.0f : 1.0f;
+                                nop->m_yVelocity = (nop->m_isSpider ? -1200.0 : -200.0) * gravDir;
+                            } else nop->m_yVelocity = (nop->m_isRobot ? 640.0 : 602.0) * gravDir;
+                            nop->m_isOnGround = false; jumpedOnce = true;
+                        }
+                        nop->m_yVelocity = std::clamp(nop->m_yVelocity - 2865.0 * gravDir * subDt, -810.0, 810.0);
                     }
-                    nop->m_yVelocity = std::clamp(nop->m_yVelocity - 2865.0 * gravDir * subDt, -810.0, 810.0);
                 }
-
                 nop->m_position.x += 311.58f * mult * subDt;
                 nop->m_position.y += static_cast<float>(nop->m_yVelocity) * subDt;
+                if (nop->m_position.y < 0.0f) {
+                    nop->m_position.y = 0.0f;
+                    if (nop->m_yVelocity < 0) nop->m_yVelocity = 0;
+                    nop->m_isOnGround = true;
+                }
                 nop->setPosition(nop->m_position);
                 this->checkCollisions(nop, subDt, true);
 
@@ -423,7 +398,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                         if (t == GameObjectType::Hazard && pRect.intersectsRect(obj->getObjectRect())) { nop->m_isDead = true; break; }
                         if ((t == GameObjectType::SecretCoin || t == GameObjectType::UserCoin) && pRect.intersectsRect(obj->getObjectRect())) outGotCoin = true;
                         if ((mode == 1 || mode == 2) && obj != lastUsedOrb && pRect.intersectsRect(obj->getObjectRect())) {
-                            if (applyOrbPhysics(nop, obj, gravDir)) { lastUsedOrb = obj; jumpedOnce = true; nop->m_isOnGround = false; }
+                            if (applyOrbPhysics(nop, obj, gravDir, isDashing)) { lastUsedOrb = obj; jumpedOnce = true; nop->m_isOnGround = false; }
                         }
                     }
                 }
@@ -437,6 +412,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         this->m_player1 = realPlayer; AutoBot::isSimulating = false;
         return survived;
     }
+
     bool isOrbAlwaysFatal(const OrbChainNode& node) {
         std::vector<CCPoint> tmp; bool died = false, coin = false;
         int span = std::max(1, node.lastValidFrame - node.firstValidFrame);
@@ -454,8 +430,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (!PlayLayer::init(level, dontCreateObjects)) return false;
         m_fields->trajectoryNode = CCDrawNode::create();
         this->m_objectLayer->addChild(m_fields->trajectoryNode, 1000);
-        rebuildNOP();
-        return true;
+        rebuildNOP(); return true;
     }
 
     void resetLevel() override {
@@ -480,7 +455,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
         PlayLayer::update(dt);
     }
-
     void postUpdate(float dt) override {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead || AutoBot::isSimulating) return;
@@ -498,31 +472,22 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {} });
 
         auto* ag = AutoBot::getActiveAgent();
-        auto p = this->m_player1;
-        CCPoint curPos = p->getPosition();
+        auto p = this->m_player1; CCPoint curPos = p->getPosition();
         bool isHoldOnlyMode = p->m_isShip || p->m_isDart;
         bool isClickOnlyMode = p->m_isBird || p->m_isBall || p->m_isSpider || p->m_isSwing;
 
         GameObject* currentOrb = nullptr;
         if (this->m_objects) {
-            CCRect pRect = { curPos.x - 14.f, curPos.y - 14.f, 28.f, 28.f };
+            CCRect pRect = { curPos.x - 15.f, curPos.y - 15.f, 30.f, 30.f };
             for (auto* obj : CCArrayExt<GameObject*>(this->m_objects)) {
-                if (!obj || std::abs(obj->getPositionX() - curPos.x) > 40.f) continue;
-                auto t = obj->getType();
-                if (t == GameObjectType::YellowJumpRing || t == GameObjectType::PinkJumpRing || t == GameObjectType::RedJumpRing ||
-                    t == GameObjectType::GravityRing || t == GameObjectType::GreenRing || obj->m_objectID == 1330) {
-                    if (pRect.intersectsRect(obj->getObjectRect())) { currentOrb = obj; break; }
-                }
+                if (!obj || std::abs(obj->getPositionX() - curPos.x) > 45.f) continue;
+                if (isAnyOrb(obj) && pRect.intersectsRect(obj->getObjectRect())) { currentOrb = obj; break; }
             }
         }
+
         bool diedIdle = false, diedHold = false, diedOne = false, coinIdle = false, coinHold = false, coinOne = false;
         int sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle);
-
-        // Система восстановления длины ЛОПа: если ЛОП подозрительно короткий (<10 шагов), пересобираем НОП и пересчитываем
-        if (sIdle < 10 && !diedIdle) {
-            rebuildNOP();
-            sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle);
-        }
+        if (sIdle < 10 && !diedIdle) { rebuildNOP(); sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle); }
 
         CCPoint jumpOrigin = curPos; double jumpYVel = p->m_yVelocity; bool jumpGround = p->m_isOnGround;
         bool canActNow = p->m_isOnGround || (currentOrb != nullptr) || isHoldOnlyMode || isClickOnlyMode;
@@ -534,8 +499,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             }
         }
 
-        ag->holdPath.clear(); ag->oneClickPath.clear();
-        int sHold = 0, sOne = 0;
+        ag->holdPath.clear(); ag->oneClickPath.clear(); int sHold = 0, sOne = 0;
         if (canActNow) {
             if (!isClickOnlyMode) {
                 sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold);
@@ -565,29 +529,27 @@ class $modify(MyPlayLayer, PlayLayer) {
                 if (!edgeTried) { ag->checkpoints.back().triedEdges.push_back(curPos.x); forbidden = true; }
             }
 
-            if (ag->singleClickTimer > 0) { ag->singleClickTimer--; wantHold = true; }
+            bool isDashOrb = currentOrb && (currentOrb->getType() == GameObjectType::DashRing || currentOrb->getType() == GameObjectType::GravityDashRing || currentOrb->m_objectID == 1704 || currentOrb->m_objectID == 1751);
+
+            if (p->m_isDashing) { wantHold = (diedIdle || sIdle < 15); }
+            else if (ag->singleClickTimer > 0) { ag->singleClickTimer--; wantHold = true; }
             else if (currentOrb && currentOrb != ag->lastClickedOrb) {
                 bool orbDeadly = false;
-                if (!ag->checkpoints.empty()) {
-                    for (auto& op : ag->checkpoints.back().deadlyOrbs) if (op.getDistance(currentOrb->getPosition()) < 15.f) orbDeadly = true;
-                }
+                if (!ag->checkpoints.empty()) { for (auto& op : ag->checkpoints.back().deadlyOrbs) if (op.getDistance(currentOrb->getPosition()) < 15.f) orbDeadly = true; }
                 if (!orbDeadly) {
-                    ag->lastClickedOrb = currentOrb; ag->singleClickTimer = 2; wantHold = true;
+                    ag->lastClickedOrb = currentOrb; ag->singleClickTimer = isDashOrb ? 3 : 1; wantHold = true;
                     ag->orbChain.push_back({ currentOrb, curPos, p->m_yVelocity, p->m_isUpsideDown, ag->currentFrame, ag->currentFrame + 4 });
                 }
             } else if (!forbidden && canActNow && (p->m_isOnGround || isHoldOnlyMode || isClickOnlyMode)) {
                 bool safeOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty();
                 bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty();
-
-                if (AutoBot::collectCoins && !coinIdle && ((coinOne && safeOne) || (coinHold && safeHold))) {
-                    if (coinOne && safeOne) { ag->singleClickTimer = 2; wantHold = true; } else wantHold = true;
-                } else if (diedIdle) {
+                if (diedIdle) {
                     if (safeOne) {
                         if (AutoBot::humanizeClicks && ag->humanDelayCounter < 2 && p->m_isOnGround) ag->humanDelayCounter++;
-                        else { ag->humanDelayCounter = 0; ag->singleClickTimer = 2; wantHold = true; }
-                    } else if (safeHold && sHold > sIdle + 8) {
-                        wantHold = true;
-                    }
+                        else { ag->humanDelayCounter = 0; ag->singleClickTimer = 1; wantHold = true; }
+                    } else if (safeHold && sHold > sIdle + 8) wantHold = true;
+                } else if (AutoBot::collectCoins && !coinIdle && ((coinOne && safeOne) || (coinHold && safeHold))) {
+                    if (coinOne && safeOne) { ag->singleClickTimer = 1; wantHold = true; } else if (holdAllowed) wantHold = true;
                 } else ag->humanDelayCounter = 0;
             }
 
@@ -619,7 +581,6 @@ class $modify(MyPlayLayer, PlayLayer) {
                 if (!ag->checkpoints.empty()) {
                     auto& cp = ag->checkpoints.back();
                     cp.singleClickFails++;
-                    // Активируем флаг необходимости прыгать зажимом только после неудач 1 кликом
                     if (cp.singleClickFails >= 3) cp.allowHoldJump = true;
                     for (auto it = ag->orbChain.rbegin(); it != ag->orbChain.rend(); ++it) {
                         if (isOrbAlwaysFatal(*it)) cp.deadlyOrbs.push_back(it->orb->getPosition());
