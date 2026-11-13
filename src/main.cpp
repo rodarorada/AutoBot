@@ -3,7 +3,8 @@
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
-#include <Geode/modify/GameObject.hpp>
+#include <Geode/modify/EffectGameObject.hpp>
+#include <Geode/modify/CCKeyboardDispatcher.hpp>
 #include <vector>
 #include <fstream>
 #include <algorithm>
@@ -47,19 +48,19 @@ namespace AutoBot {
     bool isSimulating = false;
     bool botInput = false;
     bool isWaitingForKey = false;
+    bool switchRequested = false;
 
-    // Настраиваемые параметры игрока
-    int scanStep = 5;           // Шаг фейковых кадров (настраивается в меню)
-    int maxAgents = 4;          // Максимум квантовых агентов
-    enumKeyCodes switchKey = KEY_Tab; // Клавиша переключения агентов
+    int scanStep = 5;
+    int maxAgents = 4;
+    enumKeyCodes switchKey = KEY_Tab;
 
     int activeAgentIndex = 0;
     int nextAgentId = 1;
     std::vector<QuantumAgent> agents;
 
     CCDrawNode* trajectoryNode = nullptr;
-    PlayerObject* nopIdle = nullptr;   // Невидимый отобразитель бездействия
-    PlayerObject* nopHold = nullptr;   // Невидимый отобразитель зажатия
+    PlayerObject* nopIdle = nullptr;
+    PlayerObject* nopHold = nullptr;
 
     QuantumAgent* getActiveAgent() {
         if (agents.empty()) return nullptr;
@@ -86,7 +87,7 @@ protected:
     CCLabelBMFont* m_agentsLabel = nullptr;
     CCLabelBMFont* m_keyLabel = nullptr;
 
-    bool init() {
+    bool init() override {
         if (!FLAlertLayer::init(150)) return false;
 
         auto winSize = CCDirector::sharedDirector()->getWinSize();
@@ -182,14 +183,14 @@ protected:
             }
         }
     }
-    void keyDown(enumKeyCodes key) override {
+    void keyDown(enumKeyCodes key, double timestamp) override {
         if (AutoBot::isWaitingForKey) {
             if (key != KEY_Escape) AutoBot::switchKey = key;
             AutoBot::isWaitingForKey = false;
             refreshLabels();
             return;
         }
-        FLAlertLayer::keyDown(key);
+        FLAlertLayer::keyDown(key, timestamp);
     }
 
     void onClose(CCObject*) { AutoBot::isWaitingForKey = false; this->keyBackClicked(); }
@@ -228,6 +229,15 @@ public:
     }
 };
 
+class $modify(MyKeyboardDispatcher, CCKeyboardDispatcher) {
+    bool dispatchKeyboardMSG(enumKeyCodes key, bool down, bool arr, double timestamp) {
+        if (down && !arr && !AutoBot::isWaitingForKey && key == AutoBot::switchKey) {
+            AutoBot::switchRequested = true;
+        }
+        return CCKeyboardDispatcher::dispatchKeyboardMSG(key, down, arr, timestamp);
+    }
+};
+
 class $modify(MyPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
@@ -241,17 +251,10 @@ class $modify(MyPauseLayer, PauseLayer) {
     void onOpenAutoBot(CCObject*) { AutoBotPopup::create()->show(); }
 };
 
-class $modify(MyGameObject, GameObject) {
-    void activateObject(PlayerObject* player) {
-        if (AutoBot::isSimulating) {
-            bool prev1 = this->m_hasBeenActivated;
-            bool prev2 = this->m_hasBeenActivatedP2;
-            GameObject::activateObject(player);
-            this->m_hasBeenActivated = prev1;
-            this->m_hasBeenActivatedP2 = prev2;
-            return;
-        }
-        GameObject::activateObject(player);
+class $modify(MyEffectGameObject, EffectGameObject) {
+    void triggerObject(GJBaseGameLayer* layer, int uniqueID, gd::vector<int> const* remap) {
+        if (AutoBot::isSimulating) return;
+        EffectGameObject::triggerObject(layer, uniqueID, remap);
     }
 };
 
@@ -289,7 +292,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         dst->m_lastPosition = src->m_lastPosition;
         dst->setPosition(src->getPosition());
         dst->m_yVelocity = src->m_yVelocity;
-        dst->m_xVelocity = src->m_xVelocity;
         dst->m_gravity = src->m_gravity;
         dst->m_playerSpeed = src->m_playerSpeed;
         dst->m_isOnGround = src->m_isOnGround;
@@ -359,8 +361,8 @@ class $modify(MyPlayLayer, PlayLayer) {
             if (std::abs(ag.savedPos.x - branchPos.x) < 25.0f && std::abs(ag.savedPos.y - branchPos.y) < 20.0f) return;
         }
 
-        std::vector<CCPoint> scoutIdle, scoutHold;
-        float d1 = -1.f, d2 = -1.f;
+        std::vector<CCPoint> scoutIdle;
+        float d1 = -1.f;
         int surv = runNOP(AutoBot::nopIdle, branchPos, branchYVel, parent.savedUpsideDown, false, 65, scoutIdle, d1);
         if (surv >= 45 && !scoutIdle.empty()) {
             float endY = scoutIdle.back().y;
@@ -422,18 +424,18 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::postUpdate(dt);
         if (!this->m_player1 || this->m_player1->m_isDead || AutoBot::isSimulating) return;
 
-        static bool prevSwitchPressed = false;
-        bool switchPressed = CCKeyboardDispatcher::get()->getIsKeyPressed(AutoBot::switchKey);
-        if (switchPressed && !prevSwitchPressed && !AutoBot::agents.empty()) {
-            AutoBot::cycleAgent();
-            if (auto* ag = AutoBot::getActiveAgent()) {
-                this->m_player1->m_position = ag->savedPos;
-                this->m_player1->setPosition(ag->savedPos);
-                this->m_player1->m_yVelocity = ag->savedYVel;
-                this->m_player1->m_isUpsideDown = ag->savedUpsideDown;
+        if (AutoBot::switchRequested) {
+            AutoBot::switchRequested = false;
+            if (!AutoBot::agents.empty()) {
+                AutoBot::cycleAgent();
+                if (auto* ag = AutoBot::getActiveAgent()) {
+                    this->m_player1->m_position = ag->savedPos;
+                    this->m_player1->setPosition(ag->savedPos);
+                    this->m_player1->m_yVelocity = ag->savedYVel;
+                    this->m_player1->m_isUpsideDown = ag->savedUpsideDown;
+                }
             }
         }
-        prevSwitchPressed = switchPressed;
 
         auto* ag = AutoBot::getActiveAgent();
         if (!ag && AutoBot::isRecording) return;
