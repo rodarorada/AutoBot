@@ -10,6 +10,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 using namespace geode::prelude;
 
@@ -28,12 +29,12 @@ struct BotCheckpoint {
     int frame;
     size_t actionCount;
     bool allowHoldJump;
+    bool deadEndPit;
     int singleClickFails;
     int totalDeaths;
     float posX;
     std::set<int> failedJumpFrames;
     std::set<int> failedDashReleaseFrames;
-    std::vector<float> triedEdges;
     std::vector<CCPoint> deadlyOrbs;
 };
 
@@ -43,12 +44,11 @@ struct QuantumAgent {
     bool currentHold;
     int singleClickTimer;
     int humanDelayCounter;
+    int humanTargetDelay;
     GameObject* lastClickedOrb;
     CCPoint savedPos;
     double savedYVel;
     bool savedUpsideDown;
-    float knownFloorY;
-    float knownCeilingY;
     std::vector<MacroAction> actions;
     std::vector<BotCheckpoint> checkpoints;
     std::vector<float> blacklistedCheckpointX;
@@ -269,31 +269,25 @@ class $modify(MyPlayLayer, PlayLayer) {
                t == GameObjectType::GravityDashRing || id == 1330 || id == 1704 || id == 1751 || id == 3004;
     }
 
-    void detectLevelBounds(CCPoint curPos, float halfH, bool isOnGround, bool upside, bool hasCeiling, float& outFloor, float& outCeil) {
-        float baseFloor = 90.0f;
-        outFloor = baseFloor;
-        outCeil = baseFloor + 300.0f;
-
-        if (!hasCeiling) return;
+    void detectLevelBounds(CCPoint curPos, bool hasCeiling, float& outFloor, float& outCeil) {
+        outFloor = 90.0f;
+        outCeil = 390.0f;
+        if (!hasCeiling || !this->m_objects) return;
 
         GameObject* bestPortal = nullptr;
         float bestDist = 999999.f;
-        if (this->m_objects) {
-            for (auto* obj : CCArrayExt<GameObject*>(this->m_objects)) {
-                if (!obj) continue;
-                int id = obj->m_objectID;
-                bool isModePortal = (id == 13 || id == 47 || id == 111 || id == 660 || id == 745 || id == 1331 || id == 1933);
-                if (isModePortal && obj->getPositionX() <= curPos.x + 20.f) {
-                    float d = curPos.x - obj->getPositionX();
-                    if (d < bestDist) { bestDist = d; bestPortal = obj; }
-                }
+        for (auto* obj : CCArrayExt<GameObject*>(this->m_objects)) {
+            if (!obj) continue;
+            int id = obj->m_objectID;
+            bool isModePortal = (id == 13 || id == 47 || id == 111 || id == 660 || id == 745 || id == 1331 || id == 1933);
+            if (isModePortal && obj->getPositionX() <= curPos.x + 20.f) {
+                float d = curPos.x - obj->getPositionX();
+                if (d < bestDist) { bestDist = d; bestPortal = obj; }
             }
         }
-
         if (bestPortal) {
-            float py = bestPortal->getPositionY();
-            float snappedFloor = std::floor((py - 150.0f) / 30.0f) * 30.0f;
-            outFloor = std::max(baseFloor, snappedFloor);
+            float snappedFloor = std::floor((bestPortal->getPositionY() - 150.0f) / 30.0f) * 30.0f;
+            outFloor = std::max(90.0f, snappedFloor);
             outCeil = outFloor + 300.0f;
         }
     }
@@ -337,8 +331,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (id == 1817) { isDashing = false; return true; }
         return false;
     }
-    int runNOP(CCPoint startPos, double startYVel, bool startUpside, bool startGrounded, int mode, int steps, std::vector<CCPoint>& pts, bool& outDied, bool& outGotCoin) {
-        pts.clear(); outDied = false; outGotCoin = false;
+    int runNOP(CCPoint startPos, double startYVel, bool startUpside, bool startGrounded, int mode, int steps, std::vector<CCPoint>& pts, bool& outDied, bool& outGotCoin, bool& outTouchedFloor) {
+        pts.clear(); outDied = false; outGotCoin = false; outTouchedFloor = false;
         PlayerObject* realPlayer = this->m_player1;
         if (!realPlayer) return 0;
 
@@ -358,7 +352,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool hasCeiling = isShip || isBall || isBird || isDart || isSpider || isSwing;
 
         float floorY = 90.0f, ceilY = 390.0f;
-        detectLevelBounds(startPos, halfH, startGrounded, startUpside, hasCeiling, floorY, ceilY);
+        detectLevelBounds(startPos, hasCeiling, floorY, ceilY);
 
         int survived = 0; bool jumpedOnce = false;
         GameObject* lastUsedObj = nullptr;
@@ -405,12 +399,12 @@ class $modify(MyPlayLayer, PlayLayer) {
                 if (pos.y - halfH <= floorY) {
                     pos.y = floorY + halfH;
                     if (yVel < 0) yVel = 0;
-                    if (!upside) onGround = true;
+                    if (!upside) { onGround = true; outTouchedFloor = true; }
                 }
                 if (hasCeiling && pos.y + halfH >= ceilY) {
                     pos.y = ceilY - halfH;
                     if (yVel > 0) yVel = 0;
-                    if (upside) onGround = true;
+                    if (upside) { onGround = true; outTouchedFloor = true; }
                 }
 
                 if (this->m_objects) {
@@ -458,7 +452,6 @@ class $modify(MyPlayLayer, PlayLayer) {
             pts.push_back(pos);
             if (died) { outDied = true; break; }
             survived++;
-            if (mode == 2 && jumpedOnce && onGround) break;
         }
         return survived;
     }
@@ -473,9 +466,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
         if (!this->m_player1) return;
-        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, 90.f, 390.f, {}, {}, {}, {}, {}, {}, {} });
+        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, 1 + (rand() % 3), nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
         if (auto* ag = AutoBot::getActiveAgent()) {
-            ag->singleClickTimer = 0; ag->humanDelayCounter = 0; ag->lastClickedOrb = nullptr; ag->orbChain.clear();
+            ag->singleClickTimer = 0; ag->humanDelayCounter = 0; ag->humanTargetDelay = 1 + (rand() % 3); ag->lastClickedOrb = nullptr; ag->orbChain.clear();
             if (AutoBot::isRecording && !ag->checkpoints.empty()) {
                 ag->currentFrame = ag->checkpoints.back().frame;
                 ag->actions.resize(ag->checkpoints.back().actionCount);
@@ -505,7 +498,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
         if (!AutoBot::showTrajectories && !AutoBot::isRecording) return;
-        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, nullptr, this->m_player1->getPosition(), 0.0, false, 90.f, 390.f, {}, {}, {}, {}, {}, {}, {} });
+        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, 1 + (rand() % 3), nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
 
         auto* ag = AutoBot::getActiveAgent();
         auto p = this->m_player1; CCPoint curPos = p->getPosition();
@@ -522,8 +515,11 @@ class $modify(MyPlayLayer, PlayLayer) {
             }
         }
 
-        bool diedIdle = false, diedHold = false, diedOne = false, coinIdle = false, coinHold = false, coinOne = false;
-        int sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle);
+        bool diedIdle = false, diedHold = false, diedOne = false;
+        bool coinIdle = false, coinHold = false, coinOne = false;
+        bool floorIdle = false, floorHold = false, floorOne = false;
+
+        int sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle, floorIdle);
 
         CCPoint jumpOrigin = curPos; double jumpYVel = p->m_yVelocity; bool jumpGround = p->m_isOnGround;
         bool canActNow = p->m_isOnGround || (currentOrb != nullptr) || isHoldOnlyMode || isClickOnlyMode;
@@ -537,8 +533,8 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         ag->holdPath.clear(); ag->oneClickPath.clear(); int sHold = 0, sOne = 0;
         if (canActNow) {
-            if (!isClickOnlyMode) sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold);
-            if (!isHoldOnlyMode) sOne = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 2, AutoBot::maxPath, ag->oneClickPath, diedOne, coinOne);
+            if (!isClickOnlyMode) sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold, floorHold);
+            if (!isHoldOnlyMode) sOne = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 2, AutoBot::maxPath, ag->oneClickPath, diedOne, coinOne, floorOne);
         }
         if (AutoBot::isRecording) {
             if (!this->m_isPracticeMode) this->togglePracticeMode(true);
@@ -550,7 +546,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                 if (isBlacklisted) { this->removeCheckpoint(false); cpCount--; }
             }
 
-            while (ag->checkpoints.size() < cpCount) ag->checkpoints.push_back({ ag->currentFrame, ag->actions.size(), false, 0, 0, curPos.x, {}, {}, {}, {} });
+            while (ag->checkpoints.size() < cpCount) ag->checkpoints.push_back({ ag->currentFrame, ag->actions.size(), false, false, 0, 0, curPos.x, {}, {}, {} });
             while (ag->checkpoints.size() > cpCount && !ag->checkpoints.empty()) ag->checkpoints.pop_back();
 
             ag->currentFrame++; ag->savedPos = curPos; ag->savedYVel = p->m_yVelocity; ag->savedUpsideDown = p->m_isUpsideDown;
@@ -560,6 +556,20 @@ class $modify(MyPlayLayer, PlayLayer) {
             bool dashReleaseForbidden = (!ag->checkpoints.empty() && ag->checkpoints.back().failedDashReleaseFrames.count(ag->currentFrame));
 
             bool isDashOrb = currentOrb && (currentOrb->getType() == GameObjectType::DashRing || currentOrb->getType() == GameObjectType::GravityDashRing || currentOrb->m_objectID == 1704 || currentOrb->m_objectID == 1751);
+
+            float idleDeathX = ag->idlePath.empty() ? curPos.x : ag->idlePath.back().x;
+            float idleEndY = ag->idlePath.empty() ? curPos.y : ag->idlePath.back().y;
+            float oneEndX = ag->oneClickPath.empty() ? curPos.x : ag->oneClickPath.back().x;
+            float holdEndX = ag->holdPath.empty() ? curPos.x : ag->holdPath.back().x;
+
+            bool safeOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty();
+            bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock;
+            bool isFalling = (idleEndY < curPos.y - 5.0f);
+
+            // Если падаем в яму, но НЕТ ни одной платформы для приземления (!safeOne && !safeHold) — помечаем чекпоинт как тупиковую яму
+            if (diedIdle && isFalling && !floorIdle && !safeOne && !safeHold && !ag->checkpoints.empty()) {
+                ag->checkpoints.back().deadEndPit = true;
+            }
 
             if (p->m_isDashing) {
                 wantHold = (diedIdle || sIdle < 15 || dashReleaseForbidden);
@@ -573,23 +583,21 @@ class $modify(MyPlayLayer, PlayLayer) {
                     ag->orbChain.push_back({ currentOrb, curPos, p->m_yVelocity, p->m_isUpsideDown, ag->currentFrame, ag->currentFrame + 4 });
                 }
             } else if (!forbidden && canActNow && (p->m_isOnGround || isHoldOnlyMode || isClickOnlyMode)) {
-                float idleDeathX = ag->idlePath.empty() ? curPos.x : ag->idlePath.back().x;
-                float oneEndX = ag->oneClickPath.empty() ? curPos.x : ag->oneClickPath.back().x;
-                float holdEndX = ag->holdPath.empty() ? curPos.x : ag->holdPath.back().x;
-
-                // Прыжок разрешён ТОЛЬКО если при прыжке выживаешь И продвигаешься вперёд относительно смерти ЛОПа бездействия
-                bool canAdvanceOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty() && (oneEndX > idleDeathX + 5.0f);
-                bool canAdvanceHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock && (holdEndX > idleDeathX + 5.0f);
+                bool isPit = diedIdle && isFalling && (!floorIdle || (safeOne || safeHold));
+                bool shouldJumpOne = safeOne && (isPit || oneEndX > idleDeathX + 5.0f);
+                bool shouldJumpHold = safeHold && (isPit || holdEndX > idleDeathX + 5.0f);
 
                 if (diedIdle) {
-                    if (canAdvanceOne) {
-                        if (AutoBot::humanizeClicks && ag->humanDelayCounter < 2 && p->m_isOnGround && sIdle > 4) ag->humanDelayCounter++;
-                        else { ag->humanDelayCounter = 0; ag->singleClickTimer = 1; wantHold = true; }
-                    } else if (canAdvanceHold) {
-                        wantHold = true;
-                    }
-                } else if (AutoBot::collectCoins && !coinIdle && ((coinOne && !diedOne && !ag->oneClickPath.empty()) || (coinHold && holdAllowed && !diedHold && !ag->holdPath.empty()))) {
-                    if (coinOne && !diedOne) { ag->singleClickTimer = 1; wantHold = true; } else if (holdAllowed && !diedHold) wantHold = true;
+                    if (shouldJumpOne) {
+                        if (AutoBot::humanizeClicks && ag->humanDelayCounter < ag->humanTargetDelay && p->m_isOnGround && sIdle > 3) {
+                            ag->humanDelayCounter++;
+                        } else {
+                            ag->humanDelayCounter = 0; ag->humanTargetDelay = 1 + (rand() % 4);
+                            ag->singleClickTimer = AutoBot::humanizeClicks ? (1 + (rand() % 2)) : 1; wantHold = true;
+                        }
+                    } else if (shouldJumpHold) wantHold = true;
+                } else if (AutoBot::collectCoins && !coinIdle && ((coinOne && safeOne) || (coinHold && safeHold))) {
+                    if (coinOne && safeOne) { ag->singleClickTimer = 1; wantHold = true; } else if (safeHold) wantHold = true;
                 } else ag->humanDelayCounter = 0;
             }
 
@@ -623,7 +631,9 @@ class $modify(MyPlayLayer, PlayLayer) {
                     cp.singleClickFails++; cp.totalDeaths++;
                     if (cp.singleClickFails >= 3) cp.allowHoldJump = true;
 
-                    if (cp.totalDeaths >= 50 && this->m_checkpointArray && this->m_checkpointArray->count() > 0) {
+                    // Для тупиковой ямы без платформ откатываемся уже через 3 смерти, для обычных мест — через 50
+                    int deathLimit = cp.deadEndPit ? 3 : 50;
+                    if (cp.totalDeaths >= deathLimit && this->m_checkpointArray && this->m_checkpointArray->count() > 0) {
                         ag->blacklistedCheckpointX.push_back(cp.posX);
                         this->removeCheckpoint(false);
                         ag->checkpoints.pop_back();
