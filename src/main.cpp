@@ -269,21 +269,13 @@ class $modify(MyPlayLayer, PlayLayer) {
                t == GameObjectType::GravityDashRing || id == 1330 || id == 1704 || id == 1751 || id == 3004;
     }
 
-    // Вычисляем реальный пол и потолок по позиции портала или земли (в GD базовый пол = 90.0f)
     void detectLevelBounds(CCPoint curPos, float halfH, bool isOnGround, bool upside, bool hasCeiling, float& outFloor, float& outCeil) {
         float baseFloor = 90.0f;
-        if (this->m_groundLayer) baseFloor = this->m_groundLayer->getPositionY() + 90.0f;
         outFloor = baseFloor;
         outCeil = baseFloor + 300.0f;
 
-        if (!hasCeiling) {
-            if (isOnGround && !upside && curPos.y - halfH < baseFloor + 5.0f) {
-                outFloor = curPos.y - halfH;
-            }
-            return;
-        }
+        if (!hasCeiling) return;
 
-        // Ищем последний пройденный портал режима (корабль, шар, НЛО, волна, паук, свинг)
         GameObject* bestPortal = nullptr;
         float bestDist = 999999.f;
         if (this->m_objects) {
@@ -299,10 +291,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         if (bestPortal) {
-            // В GD границы портала выровнены по сетке 30px вокруг центра портала (высота камеры = 300px)
             float py = bestPortal->getPositionY();
-            float snappedCenter = std::round(py / 30.0f) * 30.0f;
-            outFloor = std::max(baseFloor, snappedCenter - 150.0f);
+            float snappedFloor = std::floor((py - 150.0f) / 30.0f) * 30.0f;
+            outFloor = std::max(baseFloor, snappedFloor);
             outCeil = outFloor + 300.0f;
         }
     }
@@ -358,8 +349,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool isDashing = realPlayer->m_isDashing;
         float mult = (realPlayer->m_playerSpeed > 0.1f) ? realPlayer->m_playerSpeed : 1.0f;
         float scale = realPlayer->getScale();
-        float halfW = 14.5f * scale;
-        float halfH = 14.5f * scale;
+        float halfW = 15.0f * scale;
+        float halfH = 15.0f * scale;
 
         bool isShip = realPlayer->m_isShip, isBall = realPlayer->m_isBall, isBird = realPlayer->m_isBird;
         bool isDart = realPlayer->m_isDart, isRobot = realPlayer->m_isRobot, isSpider = realPlayer->m_isSpider;
@@ -411,13 +402,11 @@ class $modify(MyPlayLayer, PlayLayer) {
                 pos.y += static_cast<float>(yVel) * subDt;
                 onGround = false;
 
-                // Реальный пол уровня / портала
                 if (pos.y - halfH <= floorY) {
                     pos.y = floorY + halfH;
                     if (yVel < 0) yVel = 0;
                     if (!upside) onGround = true;
                 }
-                // Реальный потолок портала
                 if (hasCeiling && pos.y + halfH >= ceilY) {
                     pos.y = ceilY - halfH;
                     if (yVel > 0) yVel = 0;
@@ -584,18 +573,23 @@ class $modify(MyPlayLayer, PlayLayer) {
                     ag->orbChain.push_back({ currentOrb, curPos, p->m_yVelocity, p->m_isUpsideDown, ag->currentFrame, ag->currentFrame + 4 });
                 }
             } else if (!forbidden && canActNow && (p->m_isOnGround || isHoldOnlyMode || isClickOnlyMode)) {
-                bool safeOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty();
-                bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock;
-                // Прыгаем ТОЛЬКО если текущий путь (idle) ведёт к смерти И прыжок реально спасает (живёт дольше)
+                float idleDeathX = ag->idlePath.empty() ? curPos.x : ag->idlePath.back().x;
+                float oneEndX = ag->oneClickPath.empty() ? curPos.x : ag->oneClickPath.back().x;
+                float holdEndX = ag->holdPath.empty() ? curPos.x : ag->holdPath.back().x;
+
+                // Прыжок разрешён ТОЛЬКО если при прыжке выживаешь И продвигаешься вперёд относительно смерти ЛОПа бездействия
+                bool canAdvanceOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty() && (oneEndX > idleDeathX + 5.0f);
+                bool canAdvanceHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock && (holdEndX > idleDeathX + 5.0f);
+
                 if (diedIdle) {
-                    if (safeOne || (!isHoldOnlyMode && sOne > sIdle + 4)) {
-                        if (AutoBot::humanizeClicks && ag->humanDelayCounter < 2 && p->m_isOnGround) ag->humanDelayCounter++;
+                    if (canAdvanceOne) {
+                        if (AutoBot::humanizeClicks && ag->humanDelayCounter < 2 && p->m_isOnGround && sIdle > 4) ag->humanDelayCounter++;
                         else { ag->humanDelayCounter = 0; ag->singleClickTimer = 1; wantHold = true; }
-                    } else if (safeHold && sHold > sIdle + 8) {
+                    } else if (canAdvanceHold) {
                         wantHold = true;
                     }
-                } else if (AutoBot::collectCoins && !coinIdle && ((coinOne && safeOne) || (coinHold && safeHold))) {
-                    if (coinOne && safeOne) { ag->singleClickTimer = 1; wantHold = true; } else if (holdAllowed) wantHold = true;
+                } else if (AutoBot::collectCoins && !coinIdle && ((coinOne && !diedOne && !ag->oneClickPath.empty()) || (coinHold && holdAllowed && !diedHold && !ag->holdPath.empty()))) {
+                    if (coinOne && !diedOne) { ag->singleClickTimer = 1; wantHold = true; } else if (holdAllowed && !diedHold) wantHold = true;
                 } else ag->humanDelayCounter = 0;
             }
 
