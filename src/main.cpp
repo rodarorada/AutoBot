@@ -452,6 +452,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             pts.push_back(pos);
             if (died) { outDied = true; break; }
             survived++;
+            if (mode == 2 && jumpedOnce && onGround) break;
         }
         return survived;
     }
@@ -566,7 +567,6 @@ class $modify(MyPlayLayer, PlayLayer) {
             bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock;
             bool isFalling = (idleEndY < curPos.y - 5.0f);
 
-            // Если падаем в яму, но НЕТ ни одной платформы для приземления (!safeOne && !safeHold) — помечаем чекпоинт как тупиковую яму
             if (diedIdle && isFalling && !floorIdle && !safeOne && !safeHold && !ag->checkpoints.empty()) {
                 ag->checkpoints.back().deadEndPit = true;
             }
@@ -631,7 +631,6 @@ class $modify(MyPlayLayer, PlayLayer) {
                     cp.singleClickFails++; cp.totalDeaths++;
                     if (cp.singleClickFails >= 3) cp.allowHoldJump = true;
 
-                    // Для тупиковой ямы без платформ откатываемся уже через 3 смерти, для обычных мест — через 50
                     int deathLimit = cp.deadEndPit ? 3 : 50;
                     if (cp.totalDeaths >= deathLimit && this->m_checkpointArray && this->m_checkpointArray->count() > 0) {
                         ag->blacklistedCheckpointX.push_back(cp.posX);
