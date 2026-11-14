@@ -29,10 +29,12 @@ struct BotCheckpoint {
     int frame;
     size_t actionCount;
     bool allowHoldJump;
-    bool deadEndPit;
+    bool scoutDone;
+    int targetJumpFrame;
     int singleClickFails;
     int totalDeaths;
     float posX;
+    std::vector<int> validJumpFrames;
     std::set<int> failedJumpFrames;
     std::set<int> failedDashReleaseFrames;
     std::vector<CCPoint> deadlyOrbs;
@@ -43,8 +45,6 @@ struct QuantumAgent {
     int currentFrame;
     bool currentHold;
     int singleClickTimer;
-    int humanDelayCounter;
-    int humanTargetDelay;
     GameObject* lastClickedOrb;
     CCPoint savedPos;
     double savedYVel;
@@ -263,15 +263,10 @@ class $modify(MyPlayLayer, PlayLayer) {
     void getModeHitbox(PlayerObject* p, float& outHalfW, float& outHalfH) {
         float scale = p ? p->getScale() : 1.0f;
         if (!p) { outHalfW = 15.0f; outHalfH = 15.0f; return; }
-        if (p->m_isDart) {
-            outHalfW = 5.0f * scale; outHalfH = 5.0f * scale; // Волна: 10x10
-        } else if (p->m_isShip || p->m_isBird) {
-            outHalfW = 15.0f * scale; outHalfH = 13.5f * scale; // Корабль и НЛО: 30x27
-        } else if (p->m_isBall || p->m_isSpider || p->m_isSwing) {
-            outHalfW = 14.0f * scale; outHalfH = 14.0f * scale; // Шар, Паук, Свинг: 28x28
-        } else {
-            outHalfW = 15.0f * scale; outHalfH = 15.0f * scale; // Куб и Робот: 30x30
-        }
+        if (p->m_isDart) { outHalfW = 5.0f * scale; outHalfH = 5.0f * scale; }
+        else if (p->m_isShip || p->m_isBird) { outHalfW = 15.0f * scale; outHalfH = 13.5f * scale; }
+        else if (p->m_isBall || p->m_isSpider || p->m_isSwing) { outHalfW = 14.0f * scale; outHalfH = 14.0f * scale; }
+        else { outHalfW = 15.0f * scale; outHalfH = 15.0f * scale; }
     }
 
     bool isAnyOrb(GameObject* obj) {
@@ -331,19 +326,15 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (id == 1817) { isDashing = false; return true; }
         return false;
     }
-    int runNOP(CCPoint startPos, double startYVel, bool startUpside, bool startGrounded, int mode, int steps, std::vector<CCPoint>& pts, bool& outDied, bool& outGotCoin, bool& outTouchedFloor) {
-        pts.clear(); outDied = false; outGotCoin = false; outTouchedFloor = false;
+    int runNOP(CCPoint startPos, double startYVel, bool startUpside, bool startGrounded, int mode, int steps, std::vector<CCPoint>& pts, bool& outDied, bool& outGotCoin, bool& outLandedSafe) {
+        pts.clear(); outDied = false; outGotCoin = false; outLandedSafe = false;
         PlayerObject* realPlayer = this->m_player1;
         if (!realPlayer) return 0;
 
-        CCPoint pos = startPos;
-        double yVel = startYVel;
-        bool upside = startUpside;
-        bool onGround = startGrounded;
-        bool isDashing = realPlayer->m_isDashing;
+        CCPoint pos = startPos; double yVel = startYVel; bool upside = startUpside;
+        bool onGround = startGrounded; bool isDashing = realPlayer->m_isDashing;
         float mult = (realPlayer->m_playerSpeed > 0.1f) ? realPlayer->m_playerSpeed : 1.0f;
-        float halfW = 15.0f, halfH = 15.0f;
-        getModeHitbox(realPlayer, halfW, halfH);
+        float halfW = 15.0f, halfH = 15.0f; getModeHitbox(realPlayer, halfW, halfH);
 
         bool isShip = realPlayer->m_isShip, isBall = realPlayer->m_isBall, isBird = realPlayer->m_isBird;
         bool isDart = realPlayer->m_isDart, isRobot = realPlayer->m_isRobot, isSpider = realPlayer->m_isSpider;
@@ -353,8 +344,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         float floorY = 90.0f, ceilY = 390.0f;
         detectLevelBounds(startPos, hasCeiling, floorY, ceilY);
 
-        int survived = 0; bool jumpedOnce = false;
-        GameObject* lastUsedObj = nullptr;
+        int survived = 0; bool jumpedOnce = false; GameObject* lastUsedObj = nullptr;
         const float subDt = (1.0f / 60.0f) / 4.0f;
 
         for (int s = 0; s < steps; ++s) {
@@ -362,8 +352,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             bool died = false;
 
             for (int sub = 0; sub < 4; ++sub) {
-                CCPoint prevPos = pos;
-                float gravDir = upside ? -1.0f : 1.0f;
+                CCPoint prevPos = pos; float gravDir = upside ? -1.0f : 1.0f;
                 if (yVel * gravDir > 25.0) onGround = false;
 
                 if (isDashing && hold) { yVel = 0.0; }
@@ -391,20 +380,11 @@ class $modify(MyPlayLayer, PlayLayer) {
                     }
                 }
 
-                pos.x += 311.58f * mult * subDt;
-                pos.y += static_cast<float>(yVel) * subDt;
+                pos.x += 311.58f * mult * subDt; pos.y += static_cast<float>(yVel) * subDt;
                 onGround = false;
 
-                if (pos.y - halfH <= floorY) {
-                    pos.y = floorY + halfH;
-                    if (yVel < 0) yVel = 0;
-                    if (!upside) { onGround = true; outTouchedFloor = true; }
-                }
-                if (hasCeiling && pos.y + halfH >= ceilY) {
-                    pos.y = ceilY - halfH;
-                    if (yVel > 0) yVel = 0;
-                    if (upside) { onGround = true; outTouchedFloor = true; }
-                }
+                if (pos.y - halfH <= floorY) { pos.y = floorY + halfH; if (yVel < 0) yVel = 0; if (!upside) { onGround = true; outLandedSafe = true; } }
+                if (hasCeiling && pos.y + halfH >= ceilY) { pos.y = ceilY - halfH; if (yVel > 0) yVel = 0; if (upside) { onGround = true; outLandedSafe = true; } }
 
                 if (this->m_objects) {
                     CCRect pRect = { pos.x - halfW, pos.y - halfH, halfW * 2.f, halfH * 2.f };
@@ -419,17 +399,16 @@ class $modify(MyPlayLayer, PlayLayer) {
 
                     for (auto* obj : CCArrayExt<GameObject*>(this->m_objects)) {
                         if (!obj || std::abs(obj->getPositionX() - pos.x) > 50.f) continue;
-                        auto t = obj->getType();
-                        CCRect oRect = obj->getObjectRect();
+                        auto t = obj->getType(); CCRect oRect = obj->getObjectRect();
                         if (oRect.size.width <= 0 || oRect.size.height <= 0) continue;
 
                         if (t == GameObjectType::Hazard && killRect.intersectsRect(oRect)) { died = true; break; }
                         if ((t == GameObjectType::SecretCoin || t == GameObjectType::UserCoin) && pRect.intersectsRect(oRect)) outGotCoin = true;
 
                         if (obj != lastUsedObj && pRect.intersectsRect(oRect)) {
-                            if (applyPassiveObject(yVel, upside, gravDir, mult, isDashing, onGround, obj)) lastUsedObj = obj;
+                            if (applyPassiveObject(yVel, upside, gravDir, mult, isDashing, onGround, obj)) { lastUsedObj = obj; outLandedSafe = true; }
                             else if ((mode == 1 || mode == 2) && applyOrbPhysics(yVel, upside, gravDir, isDashing, obj)) {
-                                lastUsedObj = obj; jumpedOnce = true; onGround = false;
+                                lastUsedObj = obj; jumpedOnce = true; onGround = false; outLandedSafe = true;
                             }
                         }
 
@@ -438,10 +417,10 @@ class $modify(MyPlayLayer, PlayLayer) {
                             float objTop = oRect.getMaxY(), objBottom = oRect.getMinY();
                             if (prevBottom >= objTop - 8.0f && yVel <= 0) {
                                 if (isDart && !hasDBlock) { died = true; break; }
-                                pos.y = objTop + halfH; yVel = 0; if (!upside) onGround = true;
+                                pos.y = objTop + halfH; yVel = 0; if (!upside) { onGround = true; outLandedSafe = true; }
                             } else if (prevTop <= objBottom + 8.0f && yVel >= 0) {
                                 if (isShip || isBird || isBall || isSpider || isSwing || hasHBlock || (isDart && hasDBlock)) {
-                                    pos.y = objBottom - halfH; yVel = 0; if (upside) onGround = true;
+                                    pos.y = objBottom - halfH; yVel = 0; if (upside) { onGround = true; outLandedSafe = true; }
                                 } else { died = true; break; }
                             } else if (!hasDBlock) { died = true; break; }
                         }
@@ -467,9 +446,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
         if (!this->m_player1) return;
-        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, 1 + (rand() % 3), nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
+        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
         if (auto* ag = AutoBot::getActiveAgent()) {
-            ag->singleClickTimer = 0; ag->humanDelayCounter = 0; ag->humanTargetDelay = 1 + (rand() % 3); ag->lastClickedOrb = nullptr; ag->orbChain.clear();
+            ag->singleClickTimer = 0; ag->lastClickedOrb = nullptr; ag->orbChain.clear();
             if (AutoBot::isRecording && !ag->checkpoints.empty()) {
                 ag->currentFrame = ag->checkpoints.back().frame;
                 ag->actions.resize(ag->checkpoints.back().actionCount);
@@ -499,7 +478,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         if (m_fields->trajectoryNode) m_fields->trajectoryNode->clear();
         if (!AutoBot::showTrajectories && !AutoBot::isRecording) return;
-        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, 0, 1 + (rand() % 3), nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
+        if (AutoBot::agents.empty()) AutoBot::agents.push_back({ AutoBot::nextAgentId++, 0, false, 0, nullptr, this->m_player1->getPosition(), 0.0, false, {}, {}, {}, {}, {}, {}, {} });
 
         auto* ag = AutoBot::getActiveAgent();
         auto p = this->m_player1; CCPoint curPos = p->getPosition();
@@ -518,9 +497,9 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         bool diedIdle = false, diedHold = false, diedOne = false;
         bool coinIdle = false, coinHold = false, coinOne = false;
-        bool floorIdle = false, floorHold = false, floorOne = false;
+        bool landedIdle = false, landedHold = false, landedOne = false;
 
-        int sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle, floorIdle);
+        int sIdle = runNOP(curPos, p->m_yVelocity, p->m_isUpsideDown, p->m_isOnGround, 0, AutoBot::maxPath, ag->idlePath, diedIdle, coinIdle, landedIdle);
 
         CCPoint jumpOrigin = curPos; double jumpYVel = p->m_yVelocity; bool jumpGround = p->m_isOnGround;
         bool canActNow = p->m_isOnGround || (currentOrb != nullptr) || isHoldOnlyMode || isClickOnlyMode;
@@ -534,8 +513,8 @@ class $modify(MyPlayLayer, PlayLayer) {
 
         ag->holdPath.clear(); ag->oneClickPath.clear(); int sHold = 0, sOne = 0;
         if (canActNow) {
-            if (!isClickOnlyMode) sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold, floorHold);
-            if (!isHoldOnlyMode) sOne = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 2, AutoBot::maxPath, ag->oneClickPath, diedOne, coinOne, floorOne);
+            if (!isClickOnlyMode) sHold = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 1, AutoBot::maxPath, ag->holdPath, diedHold, coinHold, landedHold);
+            if (!isHoldOnlyMode) sOne = runNOP(jumpOrigin, jumpYVel, p->m_isUpsideDown, jumpGround, 2, AutoBot::maxPath, ag->oneClickPath, diedOne, coinOne, landedOne);
         }
         if (AutoBot::isRecording) {
             if (!this->m_isPracticeMode) this->togglePracticeMode(true);
@@ -547,7 +526,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                 if (isBlacklisted) { this->removeCheckpoint(false); cpCount--; }
             }
 
-            while (ag->checkpoints.size() < cpCount) ag->checkpoints.push_back({ ag->currentFrame, ag->actions.size(), false, false, 0, 0, curPos.x, {}, {}, {} });
+            while (ag->checkpoints.size() < cpCount) ag->checkpoints.push_back({ ag->currentFrame, ag->actions.size(), false, false, -1, 0, 0, curPos.x, {}, {}, {}, {} });
             while (ag->checkpoints.size() > cpCount && !ag->checkpoints.empty()) ag->checkpoints.pop_back();
 
             ag->currentFrame++; ag->savedPos = curPos; ag->savedYVel = p->m_yVelocity; ag->savedUpsideDown = p->m_isUpsideDown;
@@ -555,7 +534,6 @@ class $modify(MyPlayLayer, PlayLayer) {
             bool holdAllowed = isHoldOnlyMode || (!ag->checkpoints.empty() && ag->checkpoints.back().allowHoldJump);
             bool forbidden = (!ag->checkpoints.empty() && ag->checkpoints.back().failedJumpFrames.count(ag->currentFrame));
             bool dashReleaseForbidden = (!ag->checkpoints.empty() && ag->checkpoints.back().failedDashReleaseFrames.count(ag->currentFrame));
-
             bool isDashOrb = currentOrb && (currentOrb->getType() == GameObjectType::DashRing || currentOrb->getType() == GameObjectType::GravityDashRing || currentOrb->m_objectID == 1704 || currentOrb->m_objectID == 1751);
 
             float idleDeathX = ag->idlePath.empty() ? curPos.x : ag->idlePath.back().x;
@@ -563,13 +541,9 @@ class $modify(MyPlayLayer, PlayLayer) {
             float oneEndX = ag->oneClickPath.empty() ? curPos.x : ag->oneClickPath.back().x;
             float holdEndX = ag->holdPath.empty() ? curPos.x : ag->holdPath.back().x;
 
-            bool safeOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty();
-            bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock;
-            bool isFalling = (idleEndY < curPos.y - 5.0f);
-
-            if (diedIdle && isFalling && !floorIdle && !safeOne && !safeHold && !ag->checkpoints.empty()) {
-                ag->checkpoints.back().deadEndPit = true;
-            }
+            bool safeOne = !isHoldOnlyMode && !diedOne && !ag->oneClickPath.empty() && (isClickOnlyMode || landedOne || oneEndX > idleDeathX + 5.0f);
+            bool safeHold = holdAllowed && !isClickOnlyMode && !diedHold && !ag->holdPath.empty() && !onJBlock && (isHoldOnlyMode || landedHold || holdEndX > idleDeathX + 5.0f);
+            bool isPit = diedIdle && (idleEndY < curPos.y - 5.0f);
 
             if (p->m_isDashing) {
                 wantHold = (diedIdle || sIdle < 15 || dashReleaseForbidden);
@@ -583,22 +557,17 @@ class $modify(MyPlayLayer, PlayLayer) {
                     ag->orbChain.push_back({ currentOrb, curPos, p->m_yVelocity, p->m_isUpsideDown, ag->currentFrame, ag->currentFrame + 4 });
                 }
             } else if (!forbidden && canActNow && (p->m_isOnGround || isHoldOnlyMode || isClickOnlyMode)) {
-                bool isPit = diedIdle && isFalling && (!floorIdle || (safeOne || safeHold));
-                bool shouldJumpOne = safeOne && (isPit || oneEndX > idleDeathX + 5.0f);
-                bool shouldJumpHold = safeHold && (isPit || holdEndX > idleDeathX + 5.0f);
-
-                if (diedIdle) {
-                    if (shouldJumpOne) {
-                        if (AutoBot::humanizeClicks && ag->humanDelayCounter < ag->humanTargetDelay && p->m_isOnGround && sIdle > 3) {
-                            ag->humanDelayCounter++;
-                        } else {
-                            ag->humanDelayCounter = 0; ag->humanTargetDelay = 1 + (rand() % 4);
-                            ag->singleClickTimer = AutoBot::humanizeClicks ? (1 + (rand() % 2)) : 1; wantHold = true;
-                        }
-                    } else if (shouldJumpHold) wantHold = true;
+                bool canJumpNow = (safeOne && (isClickOnlyMode || isPit || oneEndX > idleDeathX + 5.0f)) || (safeHold && (isHoldOnlyMode || isPit || holdEndX > idleDeathX + 5.0f));
+                if (diedIdle && canJumpNow) {
+                    if (!isHoldOnlyMode && !isClickOnlyMode && !ag->checkpoints.empty() && !ag->checkpoints.back().scoutDone) {
+                        ag->checkpoints.back().validJumpFrames.push_back(ag->currentFrame); // Запоминаем все валидные кадры окна
+                    } else if (!ag->checkpoints.empty() && ag->checkpoints.back().targetJumpFrame > 0 && ag->currentFrame < ag->checkpoints.back().targetJumpFrame) {
+                        wantHold = false; // Ждём выбранный центральный/рандомный кадр из окна
+                    } else if (safeOne) { ag->singleClickTimer = 1; wantHold = true; }
+                    else if (safeHold) wantHold = true;
                 } else if (AutoBot::collectCoins && !coinIdle && ((coinOne && safeOne) || (coinHold && safeHold))) {
                     if (coinOne && safeOne) { ag->singleClickTimer = 1; wantHold = true; } else if (safeHold) wantHold = true;
-                } else ag->humanDelayCounter = 0;
+                }
             }
 
             if (ag->currentHold != wantHold) {
@@ -608,8 +577,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         if (AutoBot::showTrajectories && m_fields->trajectoryNode) {
-            float hbW = 15.0f, hbH = 15.0f;
-            getModeHitbox(p, hbW, hbH);
+            float hbW = 15.0f, hbH = 15.0f; getModeHitbox(p, hbW, hbH);
             auto draw = [&](CCPoint start, const std::vector<CCPoint>& pts, ccColor4F col, bool died) {
                 if (pts.empty()) return;
                 CCPoint prev = start;
@@ -633,12 +601,20 @@ class $modify(MyPlayLayer, PlayLayer) {
                     cp.singleClickFails++; cp.totalDeaths++;
                     if (cp.singleClickFails >= 3) cp.allowHoldJump = true;
 
-                    int deathLimit = cp.deadEndPit ? 3 : 50;
-                    if (cp.totalDeaths >= deathLimit && this->m_checkpointArray && this->m_checkpointArray->count() > 0) {
+                    if (!cp.scoutDone && !cp.validJumpFrames.empty()) {
+                        cp.scoutDone = true;
+                        int midIdx = static_cast<int>(cp.validJumpFrames.size()) / 2;
+                        if (AutoBot::humanizeClicks && cp.validJumpFrames.size() > 2) {
+                            int spread = std::min(2, midIdx);
+                            midIdx += (rand() % (spread * 2 + 1)) - spread;
+                        }
+                        cp.targetJumpFrame = cp.validJumpFrames[midIdx];
+                    } else if (cp.totalDeaths >= 50 && this->m_checkpointArray && this->m_checkpointArray->count() > 0) {
                         ag->blacklistedCheckpointX.push_back(cp.posX);
                         this->removeCheckpoint(false);
                         ag->checkpoints.pop_back();
                     } else {
+                        cp.targetJumpFrame = -1;
                         for (auto it = ag->actions.rbegin(); it != ag->actions.rend(); ++it) {
                             if (it->hold) { for (int k = 0; k < AutoBot::learningSpeed; ++k) cp.failedJumpFrames.insert(it->frame + k); break; }
                             else { for (int k = 0; k < AutoBot::learningSpeed * 2; ++k) cp.failedDashReleaseFrames.insert(it->frame + k); }
