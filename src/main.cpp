@@ -260,6 +260,20 @@ class $modify(MyPlayLayer, PlayLayer) {
         CCDrawNode* trajectoryNode = nullptr;
     };
 
+    void getModeHitbox(PlayerObject* p, float& outHalfW, float& outHalfH) {
+        float scale = p ? p->getScale() : 1.0f;
+        if (!p) { outHalfW = 15.0f; outHalfH = 15.0f; return; }
+        if (p->m_isDart) {
+            outHalfW = 5.0f * scale; outHalfH = 5.0f * scale; // Волна: 10x10
+        } else if (p->m_isShip || p->m_isBird) {
+            outHalfW = 15.0f * scale; outHalfH = 13.5f * scale; // Корабль и НЛО: 30x27
+        } else if (p->m_isBall || p->m_isSpider || p->m_isSwing) {
+            outHalfW = 14.0f * scale; outHalfH = 14.0f * scale; // Шар, Паук, Свинг: 28x28
+        } else {
+            outHalfW = 15.0f * scale; outHalfH = 15.0f * scale; // Куб и Робот: 30x30
+        }
+    }
+
     bool isAnyOrb(GameObject* obj) {
         if (!obj) return false;
         auto t = obj->getType(); int id = obj->m_objectID;
@@ -270,12 +284,9 @@ class $modify(MyPlayLayer, PlayLayer) {
     }
 
     void detectLevelBounds(CCPoint curPos, bool hasCeiling, float& outFloor, float& outCeil) {
-        outFloor = 90.0f;
-        outCeil = 390.0f;
+        outFloor = 90.0f; outCeil = 390.0f;
         if (!hasCeiling || !this->m_objects) return;
-
-        GameObject* bestPortal = nullptr;
-        float bestDist = 999999.f;
+        GameObject* bestPortal = nullptr; float bestDist = 999999.f;
         for (auto* obj : CCArrayExt<GameObject*>(this->m_objects)) {
             if (!obj) continue;
             int id = obj->m_objectID;
@@ -287,8 +298,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
         if (bestPortal) {
             float snappedFloor = std::floor((bestPortal->getPositionY() - 150.0f) / 30.0f) * 30.0f;
-            outFloor = std::max(90.0f, snappedFloor);
-            outCeil = outFloor + 300.0f;
+            outFloor = std::max(90.0f, snappedFloor); outCeil = outFloor + 300.0f;
         }
     }
 
@@ -297,20 +307,12 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (t == GameObjectType::YellowJumpRing) { yVel = 602.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::PinkJumpRing) { yVel = 435.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::RedJumpRing) { yVel = 830.0 * gravDir; isDashing = false; return true; }
-        if (t == GameObjectType::GravityRing) {
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -220.0 * gravDir; isDashing = false; return true;
-        }
-        if (t == GameObjectType::GreenRing) {
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = 580.0 * gravDir; isDashing = false; return true;
-        }
+        if (t == GameObjectType::GravityRing) { upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -220.0 * gravDir; isDashing = false; return true; }
+        if (t == GameObjectType::GreenRing) { upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = 580.0 * gravDir; isDashing = false; return true; }
         if (id == 1330) { yVel = -950.0 * gravDir; isDashing = false; return true; }
         if (t == GameObjectType::DashRing || id == 1704) { yVel = 0.0; isDashing = true; return true; }
-        if (t == GameObjectType::GravityDashRing || id == 1751) {
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = 0.0; isDashing = true; return true;
-        }
-        if (id == 3004) {
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -1500.0 * gravDir; isDashing = false; return true;
-        }
+        if (t == GameObjectType::GravityDashRing || id == 1751) { upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = 0.0; isDashing = true; return true; }
+        if (id == 3004) { upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -1500.0 * gravDir; isDashing = false; return true; }
         return false;
     }
 
@@ -319,9 +321,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (t == GameObjectType::YellowJumpPad || id == 35) { yVel = 860.0 * gravDir; onGround = false; isDashing = false; return true; }
         if (t == GameObjectType::PinkJumpPad || id == 140) { yVel = 610.0 * gravDir; onGround = false; isDashing = false; return true; }
         if (t == GameObjectType::RedJumpPad || id == 1332) { yVel = 1150.0 * gravDir; onGround = false; isDashing = false; return true; }
-        if (t == GameObjectType::GravityPad || id == 67) {
-            upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -300.0 * gravDir; onGround = false; isDashing = false; return true;
-        }
+        if (t == GameObjectType::GravityPad || id == 67) { upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -300.0 * gravDir; onGround = false; isDashing = false; return true; }
         if (id == 3005) { upside = !upside; gravDir = upside ? -1.0f : 1.0f; yVel = -1600.0 * gravDir; onGround = false; isDashing = false; return true; }
         if (id == 200) { speedMult = 0.807f; return true; }
         if (id == 201) { speedMult = 1.0f; return true; }
@@ -342,9 +342,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         bool onGround = startGrounded;
         bool isDashing = realPlayer->m_isDashing;
         float mult = (realPlayer->m_playerSpeed > 0.1f) ? realPlayer->m_playerSpeed : 1.0f;
-        float scale = realPlayer->getScale();
-        float halfW = 15.0f * scale;
-        float halfH = 15.0f * scale;
+        float halfW = 15.0f, halfH = 15.0f;
+        getModeHitbox(realPlayer, halfW, halfH);
 
         bool isShip = realPlayer->m_isShip, isBall = realPlayer->m_isBall, isBird = realPlayer->m_isBird;
         bool isDart = realPlayer->m_isDart, isRobot = realPlayer->m_isRobot, isSpider = realPlayer->m_isSpider;
@@ -409,7 +408,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
                 if (this->m_objects) {
                     CCRect pRect = { pos.x - halfW, pos.y - halfH, halfW * 2.f, halfH * 2.f };
-                    CCRect killRect = { pos.x - halfW * 0.45f, pos.y - halfH * 0.45f, halfW * 0.9f, halfH * 0.9f };
+                    CCRect killRect = isDart ? pRect : CCRect{ pos.x - halfW * 0.45f, pos.y - halfH * 0.45f, halfW * 0.9f, halfH * 0.9f };
                     bool hasDBlock = false, hasHBlock = false;
 
                     for (auto* obj : CCArrayExt<GameObject*>(this->m_objects)) {
@@ -438,6 +437,7 @@ class $modify(MyPlayLayer, PlayLayer) {
                             float prevBottom = prevPos.y - halfH, prevTop = prevPos.y + halfH;
                             float objTop = oRect.getMaxY(), objBottom = oRect.getMinY();
                             if (prevBottom >= objTop - 8.0f && yVel <= 0) {
+                                if (isDart && !hasDBlock) { died = true; break; }
                                 pos.y = objTop + halfH; yVel = 0; if (!upside) onGround = true;
                             } else if (prevTop <= objBottom + 8.0f && yVel >= 0) {
                                 if (isShip || isBird || isBall || isSpider || isSwing || hasHBlock || (isDart && hasDBlock)) {
@@ -608,13 +608,15 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         if (AutoBot::showTrajectories && m_fields->trajectoryNode) {
+            float hbW = 15.0f, hbH = 15.0f;
+            getModeHitbox(p, hbW, hbH);
             auto draw = [&](CCPoint start, const std::vector<CCPoint>& pts, ccColor4F col, bool died) {
                 if (pts.empty()) return;
                 CCPoint prev = start;
                 for (const auto& pt : pts) { m_fields->trajectoryNode->drawSegment(prev, pt, 0.55f, col); prev = pt; }
-                float hb = 15.0f * p->getScale(); CCPoint end = pts.back();
+                CCPoint end = pts.back();
                 ccColor4F box = died ? ccColor4F{ 1.f, 0.f, 0.f, 0.95f } : col;
-                m_fields->trajectoryNode->drawRect({ end.x - hb, end.y - hb }, { end.x + hb, end.y + hb }, { 0, 0, 0, 0 }, 0.5f, box);
+                m_fields->trajectoryNode->drawRect({ end.x - hbW, end.y - hbH }, { end.x + hbW, end.y + hbH }, { 0, 0, 0, 0 }, 0.5f, box);
             };
             draw(curPos, ag->idlePath, { 0.1f, 1.0f, 0.1f, 0.9f }, diedIdle);
             if (!isClickOnlyMode) draw(jumpOrigin, ag->holdPath, { 1.0f, 0.12f, 0.12f, 0.9f }, diedHold);
